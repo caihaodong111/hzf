@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mysql:*)",
+      "Bash(pip:*)",
+      "Bash(python:*)",
+      "Bash(dir:*)",
+      "Bash(conda activate:*)",
+      "Bash(conda run:*)",
+      "Bash(timeout:*)",
+      "Bash(ping:*)",
+      "Bash(powershell:*)"
+    ]
+  }
+}

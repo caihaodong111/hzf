@@ -1,0 +1,31 @@
+# Django核心
+Django==4.2.7
+djangorestframework==3.14.0
+django-cors-headers==4.3.1
+django-filter==23.5
+
+# 数据库
+pymysql==1.1.0
+redis==5.0.1
+django-redis==6.0.0
+
+# 异步任务
+celery==5.3.4
+django-celery-beat==2.5.0
+
+# WebSocket
+channels==4.0.0
+channels-redis==4.2.0
+
+# 数据生成
+Faker==20.1.0
+
+# API文档
+drf-yasg==1.21.7
+
+# 工具
+python-dotenv==1.0.0
+pytz==2023.3
+
+# 安全
+cryptography==41.0.7
