@@ -9,7 +9,10 @@
       "Bash(conda run:*)",
       "Bash(timeout:*)",
       "Bash(ping:*)",
-      "Bash(powershell:*)"
+      "Bash(powershell:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(git remote set-url:*)"
     ]
   }
 }
