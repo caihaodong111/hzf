@@ -11,30 +11,23 @@
         </div>
       </div>
       <div class="hero-actions">
-        <el-select v-model="timeRange" size="small" style="width: 140px" @change="loadData">
+        <el-select v-model="timeRange" class="analysis-select" style="width: 140px" @change="loadData">
           <el-option label="最近24小时" :value="24" />
           <el-option label="最近7天" :value="168" />
           <el-option label="最近30天" :value="720" />
         </el-select>
-        <el-select
-          v-model="trendDeviceId"
-          size="small"
-          style="width: 200px"
-          placeholder="选择站点"
-          :disabled="!sensors.length"
-          @change="loadTrend"
-        >
-          <el-option
-            v-for="item in sensors"
-            :key="item.device_id"
-            :label="item.device_name || item.device_id"
-            :value="item.device_id"
+        <div class="segment-search">
+          <input
+            type="text"
+            placeholder="站点搜索..."
+            v-model="trendSearch"
+            @keyup.enter="applyTrendSearch"
           />
-        </el-select>
-        <el-button type="primary" size="small" :loading="loading" @click="loadData">
-          <el-icon><Refresh /></el-icon>
-          刷新
-        </el-button>
+        </div>
+        <button class="refresh-btn" type="button" @click="loadData" :disabled="loading">
+          <el-icon :class="{ spinning: loading }"><Refresh /></el-icon>
+          <span>刷新</span>
+        </button>
       </div>
     </div>
 
@@ -143,6 +136,7 @@ const dataSource = ref('-')
 const lastUpdate = ref('')
 const trendDeviceId = ref('')
 const trendHistory = ref([])
+const trendSearch = ref('')
 
 const dataSourceLabel = computed(() => {
   const map = {
@@ -270,7 +264,7 @@ const loadData = async () => {
   try {
     const [overviewRes, realtimeRes] = await Promise.all([
       getDashboardOverview(timeRange.value, 300),
-      getRealtimeData(300, '', '', '', true)
+      getRealtimeData(300, '', '', '', '', true)
     ])
 
     if (overviewRes.code === 200) {
@@ -315,6 +309,20 @@ const loadTrend = async () => {
     trendHistory.value = []
   } finally {
     updateTrendChart()
+  }
+}
+
+const applyTrendSearch = () => {
+  const keyword = trendSearch.value.trim()
+  if (!keyword) return
+  const match = sensors.value.find(sensor => {
+    const name = sensor.device_name || ''
+    const id = sensor.device_id || ''
+    return name.includes(keyword) || id.includes(keyword)
+  })
+  if (match) {
+    trendDeviceId.value = match.device_id
+    loadTrend()
   }
 }
 
@@ -644,6 +652,88 @@ onUnmounted(() => {
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
+}
+
+.analysis-select {
+  :deep(.el-input__wrapper) {
+    background: #d9d9d9;
+    border: 1px solid #c8c8c8;
+    box-shadow: none;
+    border-radius: 8px;
+    font-weight: 600;
+    color: #1f2937;
+    padding: 8px 12px;
+    min-height: 36px;
+    height: 36px;
+  }
+
+  :deep(.el-input__inner) {
+    height: 20px;
+    line-height: 20px;
+  }
+
+  :deep(.el-input__inner::placeholder) {
+    color: #374151;
+  }
+}
+
+.segment-search {
+  display: flex;
+  align-items: center;
+  padding: 8px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  background: #ffffff;
+  min-width: 220px;
+
+  input {
+    border: none;
+    outline: none;
+    width: 100%;
+    font-size: 14px;
+    color: #1f2937;
+
+    &::placeholder {
+      color: #9ca3af;
+    }
+  }
+}
+
+.refresh-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border-radius: 10px;
+  border: 1px solid #e5e7eb;
+  background: rgba(255, 255, 255, 0.85);
+  color: #1f2937;
+  font-weight: 600;
+  cursor: pointer;
+  transition: box-shadow 0.2s ease, transform 0.2s ease;
+
+  &:hover:not(:disabled) {
+    box-shadow: 0 6px 16px rgba(15, 23, 42, 0.12);
+    transform: translateY(-1px);
+  }
+
+  &:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+}
+
+.spinning {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .kpi-grid {

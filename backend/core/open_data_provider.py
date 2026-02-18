@@ -30,6 +30,12 @@ class OpenWaterRecord:
     dissolved_oxygen: Optional[float]
     ph: Optional[float]
     conductivity: Optional[float] = None  # 电导率 (μS/cm)
+    permanganate: Optional[float] = None  # 高锰酸盐指数 (mg/L)
+    ammonia_nitrogen: Optional[float] = None  # 氨氮 (mg/L)
+    total_phosphorus: Optional[float] = None  # 总磷 (mg/L)
+    total_nitrogen: Optional[float] = None  # 总氮 (mg/L)
+    chlorophyll_a: Optional[float] = None  # 叶绿素a (mg/L)
+    algae_density: Optional[float] = None  # 藻密度 (cells/L)
 
 
 _cache: Dict[str, Any] = {"records": None, "fetched_at": None}
@@ -157,6 +163,12 @@ def _normalize_row(row: Dict[str, Any], config: Dict[str, Any]) -> Optional[Open
         dissolved_oxygen=_parse_float(_pick_value(row, field_map.get("dissolved_oxygen"))),
         ph=_parse_float(_pick_value(row, field_map.get("ph"))),
         conductivity=_parse_float(_pick_value(row, field_map.get("conductivity"))),
+        permanganate=_parse_float(_pick_value(row, field_map.get("permanganate"))),
+        ammonia_nitrogen=_parse_float(_pick_value(row, field_map.get("ammonia_nitrogen"))),
+        total_phosphorus=_parse_float(_pick_value(row, field_map.get("total_phosphorus"))),
+        total_nitrogen=_parse_float(_pick_value(row, field_map.get("total_nitrogen"))),
+        chlorophyll_a=_parse_float(_pick_value(row, field_map.get("chlorophyll_a"))),
+        algae_density=_parse_float(_pick_value(row, field_map.get("algae_density"))),
     )
 
 
@@ -267,6 +279,13 @@ class OpenWaterDataService:
                     "salinity": record.salinity,
                     "dissolved_oxygen": record.dissolved_oxygen,
                     "ph": record.ph,
+                    "conductivity": record.conductivity,
+                    "permanganate": record.permanganate,
+                    "ammonia_nitrogen": record.ammonia_nitrogen,
+                    "total_phosphorus": record.total_phosphorus,
+                    "total_nitrogen": record.total_nitrogen,
+                    "chlorophyll_a": record.chlorophyll_a,
+                    "algae_density": record.algae_density,
                     "timestamp": record.timestamp.isoformat(),
                 }
             )
@@ -295,6 +314,13 @@ class OpenWaterDataService:
                 "salinity": record.salinity,
                 "dissolved_oxygen": record.dissolved_oxygen,
                 "ph": record.ph,
+                "conductivity": record.conductivity,
+                "permanganate": record.permanganate,
+                "ammonia_nitrogen": record.ammonia_nitrogen,
+                "total_phosphorus": record.total_phosphorus,
+                "total_nitrogen": record.total_nitrogen,
+                "chlorophyll_a": record.chlorophyll_a,
+                "algae_density": record.algae_density,
             }
             for record in filtered
         ]

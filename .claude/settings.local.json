@@ -18,7 +18,10 @@
       "Bash(curl:*)",
       "Bash(npm run build)",
       "Bash(python3:*)",
-      "Bash(pkill:*)"
+      "Bash(pkill:*)",
+      "Bash(ls:*)",
+      "Bash(npm run lint:*)",
+      "Bash(npm run:*)"
     ]
   }
 }

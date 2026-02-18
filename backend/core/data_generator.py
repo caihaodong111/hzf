@@ -29,6 +29,19 @@ class SensorDataGenerator:
     PH_MAX = 8.5  # 最高pH
     PH_BASE = 7.5  # 基础pH
 
+    PERMANGANATE_MIN = 1.0  # 高锰酸盐指数最低值
+    PERMANGANATE_MAX = 8.0  # 高锰酸盐指数最高值
+    AMMONIA_MIN = 0.01  # 氨氮最低值
+    AMMONIA_MAX = 1.5  # 氨氮最高值
+    TOTAL_P_MIN = 0.01  # 总磷最低值
+    TOTAL_P_MAX = 0.5  # 总磷最高值
+    TOTAL_N_MIN = 0.2  # 总氮最低值
+    TOTAL_N_MAX = 2.5  # 总氮最高值
+    CHLOROPHYLL_A_MIN = 0.5  # 叶绿素a最低值
+    CHLOROPHYLL_A_MAX = 40.0  # 叶绿素a最高值
+    ALGAE_DENSITY_MIN = 1_000  # 藻密度最低值
+    ALGAE_DENSITY_MAX = 800_000  # 藻密度最高值
+
     @classmethod
     def generate_temperature(cls, base_value=None):
         """
@@ -99,18 +112,63 @@ class SensorDataGenerator:
         return round(max(cls.PH_MIN, min(cls.PH_MAX, value)), 1)
 
     @classmethod
-    def generate_sensor_data(cls, device_id=None):
+    def generate_permanganate_index(cls):
+        """生成高锰酸盐指数 (mg/L)"""
+        value = random.uniform(cls.PERMANGANATE_MIN, cls.PERMANGANATE_MAX)
+        return round(value, 2)
+
+    @classmethod
+    def generate_ammonia_nitrogen(cls):
+        """生成氨氮 (mg/L)"""
+        value = random.uniform(cls.AMMONIA_MIN, cls.AMMONIA_MAX)
+        return round(value, 3)
+
+    @classmethod
+    def generate_total_phosphorus(cls):
+        """生成总磷 (mg/L)"""
+        value = random.uniform(cls.TOTAL_P_MIN, cls.TOTAL_P_MAX)
+        return round(value, 3)
+
+    @classmethod
+    def generate_total_nitrogen(cls):
+        """生成总氮 (mg/L)"""
+        value = random.uniform(cls.TOTAL_N_MIN, cls.TOTAL_N_MAX)
+        return round(value, 3)
+
+    @classmethod
+    def generate_chlorophyll_a(cls):
+        """生成叶绿素a (mg/L)"""
+        value = random.uniform(cls.CHLOROPHYLL_A_MIN, cls.CHLOROPHYLL_A_MAX)
+        return round(value, 2)
+
+    @classmethod
+    def generate_algae_density(cls):
+        """生成藻密度 (cells/L)"""
+        return round(random.uniform(cls.ALGAE_DENSITY_MIN, cls.ALGAE_DENSITY_MAX), 0)
+
+    @classmethod
+    def generate_sensor_data(cls, device_id=None, device_name=None, province=None, river_basin=None):
         """
         生成完整的传感器数据
 
         Args:
             device_id: 设备ID，如果不指定则随机生成
+            device_name: 设备名称（断面名称）
+            province: 省份
+            river_basin: 流域
 
         Returns:
             dict: 包含所有传感器参数的字典
         """
         if device_id is None:
             device_id = f'sensor_{random.randint(1, 10):03d}'
+
+        if device_name is None:
+            device_name = f'监测断面{random.randint(1, 100)}'
+
+        # 水质类别
+        quality_choices = ['Ⅰ', 'Ⅱ', 'Ⅲ', 'Ⅳ', 'Ⅴ', '劣Ⅴ']
+        weights = [0.15, 0.30, 0.30, 0.15, 0.07, 0.03]  # Ⅲ类和Ⅱ类概率最高
 
         # 生成带有一定相关性的数据
         temp = cls.generate_temperature()
@@ -120,11 +178,22 @@ class SensorDataGenerator:
 
         return {
             'device_id': device_id,
-            'location': f'{random.randint(1, 5)}号池',
+            'device_name': device_name,
+            'location': f'{province or "未知"} - {river_basin or "未知流域"}' if province or river_basin else f'{random.randint(1, 5)}号监测点',
+            'province': province,
+            'river_basin': river_basin,
+            'water_quality': random.choices(quality_choices, weights=weights)[0],
             'temperature': temp,
-            'salinity': cls.generate_salinity(),
-            'dissolved_oxygen': do,
             'ph': cls.generate_ph(),
+            'dissolved_oxygen': do,
+            'conductivity': random.uniform(200, 800),  # 电导率 μS/cm
+            'turbidity': random.uniform(5, 100),  # 浊度 NTU
+            'permanganate': cls.generate_permanganate_index(),
+            'ammonia_nitrogen': cls.generate_ammonia_nitrogen(),
+            'total_phosphorus': cls.generate_total_phosphorus(),
+            'total_nitrogen': cls.generate_total_nitrogen(),
+            'chlorophyll_a': cls.generate_chlorophyll_a(),
+            'algae_density': cls.generate_algae_density(),
             'timestamp': datetime.now().isoformat()
         }
 
@@ -145,7 +214,6 @@ class SensorDataGenerator:
 
         # 初始基础值
         temp_base = cls.TEMP_BASE
-        salinity_base = cls.SALINITY_BASE
         do_base = cls.DO_BASE
         ph_base = cls.PH_BASE
 
@@ -165,7 +233,6 @@ class SensorDataGenerator:
                 'time': f'{hour:02d}:00',
                 'timestamp': timestamp.isoformat(),
                 'temperature': temp,
-                'salinity': cls.generate_salinity(salinity_base),
                 'dissolved_oxygen': do,
                 'ph': cls.generate_ph(ph_base)
             })
@@ -183,14 +250,22 @@ class SensorDataGenerator:
         Returns:
             dict: 包含时间戳和传感器列表的字典
         """
+        # 省份和流域列表
+        provinces = ['北京市', '上海市', '广东省', '江苏省', '浙江省', '湖北省', '四川省']
+        basins = ['长江流域', '黄河流域', '珠江流域', '淮河流域', '海河流域']
+
         sensors = []
         for i in range(1, count + 1):
             device_id = f'sensor_{i:03d}'
-            sensors.append(cls.generate_sensor_data(device_id))
+            device_name = f'监测断面{i}'
+            province = random.choice(provinces)
+            river_basin = random.choice(basins)
+            sensors.append(cls.generate_sensor_data(device_id, device_name, province, river_basin))
 
         return {
             'timestamp': datetime.now().isoformat(),
-            'sensors': sensors
+            'sensors': sensors,
+            'total': len(sensors)
         }
 
     @classmethod

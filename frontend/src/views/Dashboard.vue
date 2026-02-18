@@ -1,242 +1,164 @@
 <template>
   <div class="dashboard-page">
-    <!-- 平台标题栏 -->
-    <div class="platform-header">
-      <div class="platform-title">
-        <h1>国家水质自动综合监管平台</h1>
-        <p>National Water Quality Automatic Monitoring Platform</p>
-      </div>
-      <div class="header-controls">
-        <div class="refresh-info">
-          <div class="auto-refresh-control">
-            <el-switch
-              v-model="autoRefresh"
-              @change="toggleAutoRefresh"
-              size="small"
-              inline-prompt
-              active-text="自动"
-              inactive-text="手动"
-            />
-            <el-select v-model="refreshInterval" size="small" style="width: 90px; margin-left: 8px" @change="onIntervalChange" :disabled="!autoRefresh">
-              <el-option label="10秒" :value="10" />
-              <el-option label="30秒" :value="30" />
-              <el-option label="60秒" :value="60" />
-              <el-option label="5分钟" :value="300" />
-            </el-select>
-          </div>
-          <div class="update-status">
-            <span class="last-update">更新时间: {{ lastUpdateTime }}</span>
-            <span v-if="autoRefresh" class="next-update">下次: {{ nextUpdateTime }}</span>
-          </div>
-          <el-button
-            type="primary"
-            :icon="refreshIcon"
-            :loading="loading && isManualRefresh"
-            @click="manualRefresh"
-            circle
-            size="small"
-            :class="{ 'refreshing': isRefreshing }"
-          />
-        </div>
-      </div>
-    </div>
+    <div class="fluid-bg"></div>
 
-    <!-- 刷新进度条 -->
-    <div v-if="autoRefresh" class="refresh-progress">
-      <div class="progress-bar" :style="{ width: progressPercent + '%' }"></div>
-    </div>
+    <div class="dashboard-content">
+      <header class="top-bar">
+        <div class="greeting">
+          <h1>水质监测概览</h1>
+          <p>实时监控全域 {{ total }} 个断面数据</p>
+        </div>
+        <div class="top-actions">
+          <button class="action-btn" @click="handleManualRefresh">
+            <el-icon :class="{ spinning: isRefreshing }"><Refresh /></el-icon>
+          </button>
+        </div>
+      </header>
 
-    <!-- 数据统计卡片 -->
-    <div class="stats-cards">
-      <div class="stat-card stat-total">
-        <div class="stat-icon">
-          <el-icon><icon-data /></el-icon>
-        </div>
-        <div class="stat-content">
-          <div class="stat-value">{{ total }}</div>
-          <div class="stat-label">监测断面总数</div>
-        </div>
-      </div>
-      <div class="stat-card stat-excellent">
-        <div class="stat-icon">
-          <el-icon><icon-success /></el-icon>
-        </div>
-        <div class="stat-content">
-          <div class="stat-value">{{ qualityStats.Ⅰ + qualityStats.Ⅱ }}</div>
-          <div class="stat-label">优良(Ⅰ-Ⅱ类)</div>
-        </div>
-      </div>
-      <div class="stat-card stat-good">
-        <div class="stat-icon">
-          <el-icon><icon-warning /></el-icon>
-        </div>
-        <div class="stat-content">
-          <div class="stat-value">{{ qualityStats.Ⅲ }}</div>
-          <div class="stat-label">良好(Ⅲ类)</div>
-        </div>
-      </div>
-      <div class="stat-card stat-poor">
-        <div class="stat-icon">
-          <el-icon><icon-close /></el-icon>
-        </div>
-        <div class="stat-content">
-          <div class="stat-value">{{ qualityStats.Ⅳ + qualityStats.Ⅴ + qualityStats.劣Ⅴ }}</div>
-          <div class="stat-label">污染(Ⅳ-劣Ⅴ类)</div>
-        </div>
-      </div>
-      <div class="stat-card stat-online">
-        <div class="stat-icon">
-          <el-icon><icon-circle-check /></el-icon>
-        </div>
-        <div class="stat-content">
-          <div class="stat-value">{{ onlineCount }}</div>
-          <div class="stat-label">在线断面</div>
-        </div>
-      </div>
-    </div>
-
-    <!-- 筛选条件 -->
-    <div class="filter-card glass-card">
-      <el-form :inline="true">
-        <el-form-item label="省份:">
-          <el-select v-model="filters.province" placeholder="全部省份" style="width: 150px" clearable @change="loadRealtimeData">
-            <el-option label="全国" value="" />
-            <el-option v-for="item in provinces" :key="item.code" :label="item.name" :value="item.code" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="流域:">
-          <el-select v-model="filters.river" placeholder="全部流域" style="width: 150px" clearable @change="loadRealtimeData">
-            <el-option label="所有流域" value="" />
-            <el-option v-for="item in rivers" :key="item.code" :label="item.name" :value="item.code" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="搜索:">
-          <el-input
-            v-model="filters.search"
-            placeholder="输入断面名称"
-            style="width: 200px"
-            @keyup.enter="loadRealtimeData"
-            clearable
-          >
-            <template #append>
-              <el-button :icon="searchIcon" @click="loadRealtimeData" />
-            </template>
-          </el-input>
-        </el-form-item>
-        <el-form-item>
-          <el-button type="primary" @click="loadRealtimeData">查询</el-button>
-        </el-form-item>
-      </el-form>
-    </div>
-
-    <!-- 数据表格 -->
-    <div class="data-table glass-card">
-      <el-table
-        :data="sensors"
-        style="width: 100%"
-        v-loading="loading && isManualRefresh"
-        :height="tableHeight"
-        :row-class-name="getRowClassName"
-        stripe
-        :row-key="getRowKey"
-      >
-        <el-table-column prop="province" label="省份" width="100" fixed />
-        <el-table-column prop="river_basin" label="流域" width="120" fixed />
-        <el-table-column prop="device_name" label="断面名称" width="180" fixed>
-          <template #default="{ row }">
-            <div class="station-name" :class="{ 'data-updated': row.justUpdated }">{{ row.device_name }}</div>
-          </template>
-        </el-table-column>
-        <el-table-column prop="timestamp" label="监测时间" width="160">
-          <template #default="{ row }">
-            <span :class="{ 'data-updated': row.justUpdated }">{{ formatTime(row.timestamp) }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column prop="water_quality" label="水质类别" width="90" align="center">
-          <template #default="{ row }">
-            <span class="quality-badge" :class="getQualityClass(row.water_quality)">
-              {{ row.water_quality || '-' }}
-            </span>
-          </template>
-        </el-table-column>
-        <el-table-column prop="temperature" label="水温(℃)" width="100" align="right">
-          <template #default="{ row }">
-            <span :class="[getValueClass('temperature', row.temperature), { 'data-updated': row.justUpdated }]">
-              {{ formatValue(row.temperature) }}
-            </span>
-          </template>
-        </el-table-column>
-        <el-table-column prop="ph" label="pH" width="80" align="right">
-          <template #default="{ row }">
-            <span :class="[getValueClass('ph', row.ph), { 'data-updated': row.justUpdated }]">
-              {{ formatValue(row.ph) }}
-            </span>
-          </template>
-        </el-table-column>
-        <el-table-column prop="dissolved_oxygen" label="溶解氧(mg/L)" width="120" align="right">
-          <template #default="{ row }">
-            <span :class="[getValueClass('dissolved_oxygen', row.dissolved_oxygen), { 'data-updated': row.justUpdated }]">
-              {{ formatValue(row.dissolved_oxygen) }}
-            </span>
-          </template>
-        </el-table-column>
-        <el-table-column prop="conductivity" label="电导率(μS/cm)" width="130" align="right">
-          <template #default="{ row }">
-            <span :class="[getValueClass('conductivity', row.conductivity), { 'data-updated': row.justUpdated }]">
-              {{ formatValue(row.conductivity) }}
-            </span>
-          </template>
-        </el-table-column>
-        <el-table-column prop="turbidity" label="浊度(NTU)" width="110" align="right">
-          <template #default="{ row }">
-            <span :class="[getValueClass('turbidity', row.turbidity), { 'data-updated': row.justUpdated }]">
-              {{ formatValue(row.turbidity) }}
-            </span>
-          </template>
-        </el-table-column>
-        <el-table-column label="状态" width="80" align="center">
-          <template #default="{ row }">
-            <div class="status-indicator" :class="{ 'status-online': isOnline(row.timestamp) }">
-              <span class="status-dot"></span>
+      <section class="metrics-grid">
+        <div class="metric-card glass" v-for="(stat, idx) in stats" :key="idx">
+          <div class="metric-header">
+            <span class="label">{{ stat.label }}</span>
+            <div class="trend-tag" :class="stat.trend">
+              {{ stat.trend === 'up' ? '↑' : stat.trend === 'down' ? '↓' : '→' }}
             </div>
-          </template>
-        </el-table-column>
-      </el-table>
+          </div>
+          <div class="metric-body">
+            <h2 class="value">{{ stat.value }}</h2>
+            <div class="sparkline-container">
+              <svg viewBox="0 0 100 32" class="sparkline-svg" aria-hidden="true">
+                <polyline :points="getSparklinePoints(stat.history)" :class="stat.trend" />
+              </svg>
+            </div>
+          </div>
+        </div>
+      </section>
 
-      <!-- 分页 -->
-      <div class="table-footer">
-        <div class="total-info">
-          共 {{ total }} 条记录，当前显示 {{ sensors.length }} 条
-          <span v-if="justUpdatedCount > 0" class="update-hint">
-            ，刚刚更新 {{ justUpdatedCount }} 条
-          </span>
-        </div>
-        <div class="auto-refresh-status">
-          <el-tag :type="autoRefresh ? 'success' : 'info'" size="small">
-            {{ autoRefresh ? '自动刷新中' : '手动模式' }}
-          </el-tag>
-          <span class="refresh-interval">每 {{ refreshInterval }} 秒</span>
-        </div>
-      </div>
-    </div>
+      <section class="content-grid">
+        <div class="data-panel glass">
+          <div class="panel-header">
+            <h3>实时数据列表</h3>
+            <div class="status-sync">
+              <div class="sync-dot" :class="{ active: autoRefresh }"></div>
+              <span>{{ autoRefresh ? '自动同步中' : '同步已暂停' }}</span>
+            </div>
+          </div>
 
-    <!-- 更新日志 -->
-    <div v-if="updateLog.length > 0" class="update-log glass-card">
-      <div class="log-header">
-        <h4>数据更新日志</h4>
-        <el-button size="small" text @click="updateLog = []">清空</el-button>
-      </div>
-      <div class="log-list">
-        <div
-          v-for="(log, index) in updateLog"
-          :key="index"
-          class="log-item"
-          :class="{ 'log-item-new': index === 0 }"
-        >
-          <span class="log-time">{{ log.time }}</span>
-          <span class="log-message">{{ log.message }}</span>
+        <div class="panel-filters">
+            <div class="cascader-wrapper" ref="provinceMenuRef">
+              <button
+                class="cascader-trigger"
+                type="button"
+                @click="toggleProvinceDropdown"
+                :class="{ active: provinceDropdownOpen }"
+              >
+                <span class="trigger-text">{{ selectedProvinceLabel }}</span>
+                <el-icon class="trigger-arrow" :class="{ rotated: provinceDropdownOpen }"><ArrowDown /></el-icon>
+              </button>
+              <div v-if="provinceDropdownOpen" class="cascader-panel">
+                <div class="cascader-column cascader-main">
+                  <div
+                    v-for="(item, index) in provinceCascadeOptions"
+                  :key="item.code || item.name"
+                  class="cascader-item"
+                  :class="{ active: index === activeProvinceIndex }"
+                  @click="selectProvince(item, index)"
+                >
+                    <span>{{ item.name }}</span>
+                    <span v-if="item.children && item.children.length" class="item-arrow">▶</span>
+                  </div>
+                </div>
+                <div class="cascader-column cascader-sub" v-if="activeProvinceChildren.length">
+                  <div
+                    v-for="child in activeProvinceChildren"
+                    :key="child"
+                    class="cascader-item"
+                    @click="selectProvinceChild(child)"
+                  >
+                    <span>{{ child }}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="segment-search">
+              <input
+                type="text"
+                placeholder="断面名称搜索..."
+                v-model="filters.search"
+                @keyup.enter="loadRealtimeData"
+              />
+            </div>
+
+            <button class="search-btn" type="button" @click="loadRealtimeData">
+              <el-icon class="search-icon"><Search /></el-icon>
+              搜索
+            </button>
+          </div>
+
+          <div class="realtime-section">
+            <div class="custom-list">
+            <div class="list-header">
+              <span>省份</span>
+              <span>流域</span>
+              <span>断面名称</span>
+              <span>水质类别</span>
+              <span>监测时间</span>
+              <span>水温(℃)</span>
+              <span>pH(无量纲)</span>
+              <span>溶解氧(mg/L)</span>
+              <span>电导率(μS/cm)</span>
+              <span>浊度(NTU)</span>
+              <span>高锰酸盐指数(mg/L)</span>
+              <span>氨氮(mg/L)</span>
+              <span>总磷(mg/L)</span>
+              <span>总氮(mg/L)</span>
+              <span>叶绿素a(mg/L)</span>
+              <span>藻密度(cells/L)</span>
+              <span>状态</span>
+            </div>
+            <div class="list-body" :class="{ scrolling: shouldScroll }">
+              <div class="list-track" :style="{ '--scroll-duration': scrollDuration }">
+                <div
+                  class="list-item"
+                  v-for="(item, index) in scrollSensors"
+                  :key="`${index}-${item.device_id || item.device_name}`"
+                  :aria-hidden="shouldScroll && index >= sensorsCount"
+                >
+                  <span class="cell">{{ item.province || '-' }}</span>
+                  <span class="cell">{{ item.river_basin || '-' }}</span>
+                  <span class="name" :class="{ 'data-updated': item.justUpdated }">{{ item.device_name }}</span>
+                  <span>
+                    <b class="quality-text" :class="getQualityClass(item.water_quality)">{{ item.water_quality || '-' }}</b>
+                  </span>
+                  <span class="time" :class="{ 'data-updated': item.justUpdated }">{{ formatTime(item.timestamp) }}</span>
+                  <span class="cell">{{ formatValue(getMetricValue(item, 'temperature')) }}</span>
+                  <span class="cell">{{ formatValue(getMetricValue(item, 'ph')) }}</span>
+                  <span class="cell">{{ formatValue(getMetricValue(item, 'dissolved_oxygen')) }}</span>
+                  <span class="cell">{{ formatValue(getMetricValue(item, 'conductivity')) }}</span>
+                  <span class="cell">{{ formatValue(getMetricValue(item, 'turbidity')) }}</span>
+                  <span class="cell">{{ formatValue(getMetricValue(item, 'permanganate_index')) }}</span>
+                  <span class="cell">{{ formatValue(getMetricValue(item, 'ammonia_nitrogen')) }}</span>
+                  <span class="cell">{{ formatValue(getMetricValue(item, 'total_phosphorus')) }}</span>
+                  <span class="cell">{{ formatValue(getMetricValue(item, 'total_nitrogen')) }}</span>
+                  <span class="cell">{{ formatValue(getMetricValue(item, 'chlorophyll_a')) }}</span>
+                  <span class="cell">{{ formatValue(getMetricValue(item, 'algae_density')) }}</span>
+                  <span class="status">
+                    <div class="indicator" :class="isOnline(item.timestamp) ? 'online' : 'offline'"></div>
+                  </span>
+                </div>
+              </div>
+            </div>
+            </div>
+
+            <!-- 加载中弹窗 -->
+            <div v-if="loading" class="filter-loading">加载中...</div>
+          </div>
+
         </div>
-      </div>
+
+      </section>
+
     </div>
   </div>
 </template>
@@ -244,115 +166,232 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { getRealtimeData } from '@/api/sensors'
-import { Refresh, Search, DataLine, SuccessFilled, Warning, CircleClose, CircleCheck } from '@element-plus/icons-vue'
-
-// Icons
-const refreshIcon = Refresh
-const searchIcon = Search
-const iconData = DataLine
-const iconSuccess = SuccessFilled
-const iconWarning = Warning
-const iconClose = CircleClose
-const iconCircleCheck = CircleCheck
+import { DataLine, Warning, Refresh, CircleCheck, ArrowDown, Search } from '@element-plus/icons-vue'
 
 const loading = ref(false)
 const sensors = ref([])
 const total = ref(0)
-const lastUpdateTime = ref('-')
-const nextUpdateTime = ref('-')
-const tableHeight = ref(600)
 const autoRefresh = ref(true)
-const refreshInterval = ref(30) // 默认30秒刷新一次
+const refreshInterval = ref(30)
 const progressPercent = ref(0)
 const isManualRefresh = ref(false)
 const isRefreshing = ref(false)
-const updateLog = ref([]) // 更新日志
+const updateLog = ref([])
 let refreshTimer = null
 let progressTimer = null
 let elapsedSinceRefresh = 0
 
-// 筛选条件
 const filters = ref({
   province: '',
   river: '',
   search: ''
 })
 
-// 省份列表
-const provinces = [
-  { code: '110000', name: '北京市' },
-  { code: '120000', name: '天津市' },
-  { code: '130000', name: '河北省' },
-  { code: '140000', name: '山西省' },
-  { code: '150000', name: '内蒙古自治区' },
-  { code: '210000', name: '辽宁省' },
-  { code: '220000', name: '吉林省' },
-  { code: '230000', name: '黑龙江省' },
-  { code: '310000', name: '上海市' },
-  { code: '320000', name: '江苏省' },
-  { code: '330000', name: '浙江省' },
-  { code: '340000', name: '安徽省' },
-  { code: '350000', name: '福建省' },
-  { code: '360000', name: '江西省' },
-  { code: '370000', name: '山东省' },
-  { code: '410000', name: '河南省' },
-  { code: '420000', name: '湖北省' },
-  { code: '430000', name: '湖南省' },
-  { code: '440000', name: '广东省' },
-  { code: '450000', name: '广西壮族自治区' },
-  { code: '460000', name: '海南省' },
-  { code: '500000', name: '重庆市' },
-  { code: '510000', name: '四川省' },
-  { code: '520000', name: '贵州省' },
-  { code: '530000', name: '云南省' },
-  { code: '540000', name: '西藏自治区' },
-  { code: '610000', name: '陕西省' },
-  { code: '620000', name: '甘肃省' },
-  { code: '630000', name: '青海省' },
-  { code: '640000', name: '宁夏回族自治区' },
-  { code: '650000', name: '新疆维吾尔自治区' }
-]
+const filteredSensors = computed(() => sensors.value)
 
-// 流域列表
-const rivers = [
-  { code: '1100000000', name: '长江流域' },
-  { code: '0900000000', name: '黄河流域' },
-  { code: '1500000000', name: '珠江流域' },
-  { code: '0200000000', name: '松花江流域' },
-  { code: '1000000000', name: '淮河流域' },
-  { code: '6010000000', name: '海河流域' },
-  { code: '0500000000', name: '辽河流域' },
-  { code: '1200000000', name: '太湖流域' }
-]
-
-// 计算刚刚更新的记录数
-const justUpdatedCount = computed(() => {
-  return sensors.value.filter(s => s.justUpdated).length
+const sensorsCount = computed(() => filteredSensors.value.length)
+const shouldScroll = computed(() => filteredSensors.value.length > 8)
+const scrollDuration = computed(() => {
+  if (!filteredSensors.value.length) return '18s'
+  const base = filteredSensors.value.length * 2.4
+  return `${Math.max(base, 18)}s`
+})
+const scrollSensors = computed(() => {
+  if (!shouldScroll.value) return filteredSensors.value
+  return [...filteredSensors.value, ...filteredSensors.value]
 })
 
-// 水质类别统计
+const provinceCascadeOptions = [
+  { code: '', name: '全国', children: [] },
+  { code: '110000', name: '北京市', children: ["东城区", "丰台区", "朝阳区", "海淀区", "石景山区", "西城区"] },
+  { code: '120000', name: '天津市', children: ["宝坻区", "武清区", "河北区", "津南区", "滨海新区", "红桥区", "蓟州区", "西青区"] },
+  { code: '130000', name: '河北省', children: ["保定市", "唐山市", "廊坊市", "张家口市", "承德市", "沧州市", "石家庄市", "秦皇岛市", "衡水市", "邢台市", "邯郸市"] },
+  { code: '140000', name: '山西省', children: ["临汾市", "吕梁市", "大同市", "太原市", "忻州市", "晋中市", "晋城市", "朔州市", "运城市", "长治市", "阳泉市"] },
+  { code: '150000', name: '内蒙古自治区', children: ["包头市", "呼伦贝尔市"] },
+  { code: '210000', name: '辽宁省', children: ["丹东市", "大连市", "抚顺市", "朝阳市", "本溪市", "沈阳市", "盘锦市", "营口市", "葫芦岛市", "辽阳市", "铁岭市", "锦州市", "鞍山市"] },
+  { code: '220000', name: '吉林省', children: ["吉林市", "四平市", "松原市", "白城市", "白山市", "辽源市", "通化市", "长春市"] },
+  { code: '230000', name: '黑龙江省', children: ["伊春市", "佳木斯市", "哈尔滨市", "大庆市", "牡丹江市", "鸡西市", "鹤岗市", "黑河市", "齐齐哈尔市"] },
+  { code: '310000', name: '上海市', children: ["嘉定区", "奉贤区", "宝山区", "崇明区", "徐汇区", "松江区", "浦东新区", "闵行区", "青浦区", "静安区"] },
+  { code: '320000', name: '江苏省', children: ["南京市", "南通市", "宿迁市", "常州市", "徐州市", "扬州市", "无锡市", "泰州市", "淮安市", "盐城市", "苏州市", "连云港市", "镇江市"] },
+  { code: '330000', name: '浙江省', children: ["丽水市", "台州市", "嘉兴市", "宁波市", "杭州市", "温州市", "湖州市", "绍兴市", "舟山市", "衢州市", "金华市"] },
+  { code: '340000', name: '安徽省', children: ["亳州市", "六安市", "合肥市", "安庆市", "宣城市", "宿州市", "池州市", "淮北市", "淮南市", "滁州市", "芜湖市", "蚌埠市", "铜陵市", "阜阳市", "马鞍山市", "黄山市"] },
+  { code: '350000', name: '福建省', children: ["三明市", "南平市", "厦门市", "宁德市", "泉州市", "漳州市", "福州市", "莆田市", "龙岩市"] },
+  { code: '360000', name: '江西省', children: ["上饶市", "九江市", "南昌市", "吉安市", "宜春市", "抚州市", "新余市", "景德镇市", "萍乡市", "赣州市", "鹰潭市"] },
+  { code: '370000', name: '山东省', children: ["东营市", "临沂市", "威海市", "德州市", "日照市", "枣庄市", "泰安市", "济南市", "济宁市", "淄博市", "滨州市", "潍坊市", "烟台市", "聊城市", "菏泽市", "青岛市"] },
+  { code: '410000', name: '河南省', children: ["三门峡市", "信阳市", "南阳市", "周口市", "商丘市", "安阳市", "平顶山市", "开封市", "新乡市", "洛阳市", "济源市", "漯河市", "濮阳市", "焦作市", "郑州市", "驻马店市", "鹤壁市"] },
+  { code: '420000', name: '湖北省', children: ["十堰市", "咸宁市", "孝感市", "宜昌市", "武汉市", "荆州市", "荆门市", "襄阳市", "鄂州市", "随州市", "黄冈市", "黄石市"] },
+  { code: '430000', name: '湖南省', children: ["娄底市", "岳阳市", "常德市", "张家界市", "怀化市", "株洲市", "永州市", "湘潭市", "益阳市", "衡阳市", "邵阳市", "郴州市", "长沙市"] },
+  { code: '440000', name: '广东省', children: ["东莞市", "中山市", "云浮市", "佛山市", "广州市", "惠州市", "揭阳市", "梅州市", "汕头市", "汕尾市", "江门市", "河源市", "深圳市", "清远市", "湛江市", "潮州市", "珠海市", "肇庆市", "茂名市", "阳江市", "韶关市"] },
+  { code: '450000', name: '广西壮族自治区', children: ["北海市", "南宁市", "崇左市", "来宾市", "柳州市", "桂林市", "梧州市", "河池市", "玉林市", "百色市", "贵港市", "贺州市", "钦州市", "防城港市"] },
+  { code: '460000', name: '海南省', children: ["三亚市", "儋州市", "海口市"] },
+  { code: '500000', name: '重庆市', children: ["万州区", "九龙坡区", "江北区", "涪陵区"] },
+  { code: '510000', name: '四川省', children: ["乐山市", "内江市", "南充市", "宜宾市", "巴中市", "广元市", "广安市", "德阳市", "成都市", "攀枝花市", "泸州市", "眉山市", "绵阳市", "自贡市", "资阳市", "达州市", "遂宁市", "雅安市"] },
+  { code: '520000', name: '贵州省', children: ["六盘水市", "安顺市", "毕节市", "贵阳市", "遵义市", "铜仁市"] },
+  { code: '530000', name: '云南省', children: ["临沧市", "丽江市", "保山市", "昆明市", "昭通市", "普洱市", "曲靖市", "玉溪市"] },
+  { code: '540000', name: '西藏自治区', children: ["拉萨市"] },
+  { code: '610000', name: '陕西省', children: ["咸阳市", "商洛市", "安康市", "宝鸡市", "延安市", "榆林市", "汉中市", "渭南市", "西安市", "铜川市"] },
+  { code: '620000', name: '甘肃省', children: ["兰州市", "嘉峪关市", "天水市", "平凉市", "张掖市", "武威市", "白银市", "金昌市", "陇南市"] },
+  { code: '630000', name: '青海省', children: ["海东市", "西宁市"] },
+  { code: '640000', name: '宁夏回族自治区', children: ["中卫市", "吴忠市", "固原市", "石嘴山市", "银川市"] },
+  { code: '650000', name: '新疆维吾尔自治区', children: ["乌鲁木齐市"] }
+]
+
+const provinceDropdownOpen = ref(false)
+const activeProvinceIndex = ref(0)
+const selectedProvince = ref({ code: '', name: '区域' })
+const selectedProvinceChild = ref('')
+const provinceMenuRef = ref(null)
+
+const activeProvinceChildren = computed(() => {
+  const item = provinceCascadeOptions[activeProvinceIndex.value]
+  if (!item || !item.children || item.code === '') return []
+  return item.children
+})
+
+const selectedProvinceLabel = computed(() => {
+  if (selectedProvinceChild.value) {
+    return `${selectedProvince.value.name} / ${selectedProvinceChild.value}`
+  }
+  return selectedProvince.value.name
+})
+
+// 切换省份下拉
+const toggleProvinceDropdown = () => {
+  provinceDropdownOpen.value = !provinceDropdownOpen.value
+  if (provinceDropdownOpen.value && selectedProvince.value.code) {
+    const index = provinceCascadeOptions.findIndex(option => option.code === selectedProvince.value.code)
+    activeProvinceIndex.value = index >= 0 ? index : 0
+  }
+}
+
+// 选择省份
+const selectProvince = (item, index = 0) => {
+  if (item.children && item.children.length) {
+    selectedProvince.value = { code: item.code, name: item.name }
+    activeProvinceIndex.value = index
+    return
+  }
+  selectedProvince.value = { code: item.code, name: item.name }
+  selectedProvinceChild.value = ''
+  filters.value.province = item.code
+  provinceDropdownOpen.value = false
+  loadRealtimeData()
+}
+
+const selectProvinceChild = (child) => {
+  const active = provinceCascadeOptions[activeProvinceIndex.value]
+  if (active && active.code !== selectedProvince.value.code) {
+    selectedProvince.value = { code: active.code, name: active.name }
+    filters.value.province = active.code
+  }
+  selectedProvinceChild.value = child
+  provinceDropdownOpen.value = false
+  loadRealtimeData()
+}
+
+// 点击外部关闭下拉
+const handleClickOutside = (e) => {
+  if (provinceMenuRef.value && !provinceMenuRef.value.contains(e.target)) {
+    provinceDropdownOpen.value = false
+  }
+}
+
+const justUpdatedCount = computed(() => sensors.value.filter(s => s.justUpdated).length)
+
+const statHistory = ref({
+  total: [],
+  goodRate: [],
+  warningCount: [],
+  onlineCount: []
+})
+
+const pushHistory = (key, value) => {
+  const series = statHistory.value[key]
+  if (!series) return
+  series.push(value)
+  if (series.length > 24) series.shift()
+}
+
+const getTrend = (series) => {
+  if (!series || series.length < 2) return 'flat'
+  return series[series.length - 1] >= series[series.length - 2] ? 'up' : 'down'
+}
+
+const getSparklinePoints = (series) => {
+  if (!series || series.length === 0) return ''
+  const width = 100
+  const height = 32
+  const padding = 4
+  const min = Math.min(...series)
+  const max = Math.max(...series)
+  const range = max - min || 1
+  return series
+    .map((value, index) => {
+      const x = padding + (index / Math.max(series.length - 1, 1)) * (width - padding * 2)
+      const y = padding + (1 - (value - min) / range) * (height - padding * 2)
+      return `${x.toFixed(2)},${y.toFixed(2)}`
+    })
+    .join(' ')
+}
+
 const qualityStats = computed(() => {
   const stats = { 'Ⅰ': 0, 'Ⅱ': 0, 'Ⅲ': 0, 'Ⅳ': 0, 'Ⅴ': 0, '劣Ⅴ': 0, '': 0 }
   sensors.value.forEach(s => {
     const quality = s.water_quality || ''
-    if (quality in stats) {
-      stats[quality]++
-    }
+    if (quality in stats) stats[quality]++
   })
   return stats
 })
 
-// 在线断面数量
-const onlineCount = computed(() => {
-  return sensors.value.filter(s => isOnline(s.timestamp)).length
+const onlineCount = computed(() => sensors.value.filter(s => isOnline(s.timestamp)).length)
+
+const goodRateValue = computed(() => {
+  if (total.value === 0) return 0
+  const good = qualityStats.value['Ⅰ'] + qualityStats.value['Ⅱ']
+  return (good / total.value) * 100
 })
 
-// 获取行唯一标识
-const getRowKey = (row) => {
-  return row.device_id || row.device_name
-}
+const goodRateText = computed(() => `${goodRateValue.value.toFixed(1)}%`)
 
-// 加载实时数据
+const warningCount = computed(() => {
+  return qualityStats.value['Ⅳ'] + qualityStats.value['Ⅴ'] + qualityStats.value['劣Ⅴ']
+})
+
+const stats = computed(() => [
+  {
+    label: '监测总数',
+    value: total.value,
+    icon: DataLine,
+    color: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+    trend: getTrend(statHistory.value.total),
+    history: statHistory.value.total
+  },
+  {
+    label: '优良率',
+    value: goodRateText.value,
+    icon: CircleCheck,
+    color: 'linear-gradient(135deg, #43e97b 0%, #38f9d7 100%)',
+    trend: getTrend(statHistory.value.goodRate),
+    history: statHistory.value.goodRate
+  },
+  {
+    label: '异常告警',
+    value: warningCount.value,
+    icon: Warning,
+    color: 'linear-gradient(135deg, #f093fb 0%, #f5576c 100%)',
+    trend: getTrend(statHistory.value.warningCount),
+    history: statHistory.value.warningCount
+  },
+  {
+    label: '在线断面',
+    value: onlineCount.value,
+    icon: CircleCheck,
+    color: 'linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)',
+    trend: getTrend(statHistory.value.onlineCount),
+    history: statHistory.value.onlineCount
+  }
+])
+
 const loadRealtimeData = async (isAuto = false) => {
   if (!isAuto) {
     loading.value = true
@@ -361,31 +400,28 @@ const loadRealtimeData = async (isAuto = false) => {
   isRefreshing.value = true
 
   try {
+    const searchName = filters.value.search
     const res = await getRealtimeData(
-      100, // 获取100条数据
+      100,
       filters.value.province,
       filters.value.river,
-      filters.value.search
+      searchName,
+      selectedProvinceChild.value  // 传递城市参数
     )
     if (res.code === 200) {
       const newSensors = res.data.sensors || []
       total.value = res.data.total || newSensors.length
-      lastUpdateTime.value = new Date().toLocaleTimeString('zh-CN')
 
-      // 标记数据变化
       const oldDeviceMap = new Map(sensors.value.map(s => [s.device_id, s]))
       const updatedDevices = []
 
       newSensors.forEach(newSensor => {
         const oldSensor = oldDeviceMap.get(newSensor.device_id)
-        // 检查是否是新数据或数据有更新
         if (!oldSensor) {
-          // 新设备
           newSensor.justUpdated = true
           newSensor.isNew = true
           updatedDevices.push({ device: newSensor.device_name, type: 'new' })
         } else {
-          // 检查数据是否有变化
           const hasChanged =
             oldSensor.timestamp !== newSensor.timestamp ||
             oldSensor.water_quality !== newSensor.water_quality ||
@@ -400,7 +436,6 @@ const loadRealtimeData = async (isAuto = false) => {
           }
         }
 
-        // 2秒后移除高亮标记
         if (newSensor.justUpdated) {
           setTimeout(() => {
             if (newSensor.justUpdated !== undefined) {
@@ -410,10 +445,8 @@ const loadRealtimeData = async (isAuto = false) => {
         }
       })
 
-      // 更新传感器数据
       sensors.value = newSensors
 
-      // 添加更新日志
       if (updatedDevices.length > 0) {
         const logTime = new Date().toLocaleTimeString('zh-CN')
         const newCount = updatedDevices.filter(d => d.type === 'new').length
@@ -433,13 +466,16 @@ const loadRealtimeData = async (isAuto = false) => {
           updateCount
         })
 
-        // 只保留最近20条日志
         if (updateLog.value.length > 20) {
           updateLog.value = updateLog.value.slice(0, 20)
         }
       }
 
-      // 重置进度
+      pushHistory('total', total.value)
+      pushHistory('goodRate', goodRateValue.value)
+      pushHistory('warningCount', warningCount.value)
+      pushHistory('onlineCount', onlineCount.value)
+
       elapsedSinceRefresh = 0
       progressPercent.value = 0
     }
@@ -452,12 +488,10 @@ const loadRealtimeData = async (isAuto = false) => {
   }
 }
 
-// 手动刷新
-const manualRefresh = () => {
+const handleManualRefresh = () => {
   loadRealtimeData(false)
 }
 
-// 切换自动刷新
 const toggleAutoRefresh = (enabled) => {
   if (enabled) {
     startProgressTimer()
@@ -465,12 +499,10 @@ const toggleAutoRefresh = (enabled) => {
   } else {
     stopRefreshTimer()
     stopProgressTimer()
-    nextUpdateTime.value = '-'
     progressPercent.value = 0
   }
 }
 
-// 刷新间隔改变
 const onIntervalChange = () => {
   if (autoRefresh.value) {
     stopRefreshTimer()
@@ -481,7 +513,6 @@ const onIntervalChange = () => {
   }
 }
 
-// 启动刷新定时器
 const startRefreshTimer = () => {
   stopRefreshTimer()
   refreshTimer = setInterval(() => {
@@ -489,7 +520,6 @@ const startRefreshTimer = () => {
   }, refreshInterval.value * 1000)
 }
 
-// 停止刷新定时器
 const stopRefreshTimer = () => {
   if (refreshTimer) {
     clearInterval(refreshTimer)
@@ -497,22 +527,15 @@ const stopRefreshTimer = () => {
   }
 }
 
-// 启动进度定时器
 const startProgressTimer = () => {
   stopProgressTimer()
-  const interval = 100 // 每100ms更新一次
+  const interval = 100
   progressTimer = setInterval(() => {
     elapsedSinceRefresh += interval
     progressPercent.value = (elapsedSinceRefresh / (refreshInterval.value * 1000)) * 100
-
-    // 更新下次刷新时间
-    const now = new Date()
-    const nextTime = new Date(now.getTime() + (refreshInterval.value * 1000 - elapsedSinceRefresh))
-    nextUpdateTime.value = nextTime.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
   }, interval)
 }
 
-// 停止进度定时器
 const stopProgressTimer = () => {
   if (progressTimer) {
     clearInterval(progressTimer)
@@ -520,7 +543,6 @@ const stopProgressTimer = () => {
   }
 }
 
-// 格式化时间
 const formatTime = (timestamp) => {
   if (!timestamp) return '-'
   const date = new Date(timestamp)
@@ -532,447 +554,670 @@ const formatTime = (timestamp) => {
   })
 }
 
-// 格式化数值
 const formatValue = (value) => {
-  if (value === null || value === undefined) return '-'
+  if (value === null || value === undefined || value === '') return '-'
   return typeof value === 'number' ? value.toFixed(2) : value
 }
 
-// 获取水质类别对应的样式类名（国家标准颜色）
+const metricKeyMap = {
+  temperature: ['temperature', 'water_temperature', 'water_temp', 'temp'],
+  ph: ['ph', 'ph_value'],
+  dissolved_oxygen: ['dissolved_oxygen', 'do', 'do_value', 'dissolvedOxygen'],
+  conductivity: ['conductivity', 'ec', 'electrical_conductivity'],
+  turbidity: ['turbidity', 'ntu'],
+  permanganate_index: ['permanganate_index', 'codmn', 'cod_mn', 'mn_index', 'permanganateIndex'],
+  ammonia_nitrogen: ['ammonia_nitrogen', 'nh3_n', 'nh3n', 'ammonia', 'ammoniaNitrogen'],
+  total_phosphorus: ['total_phosphorus', 'tp', 'totalPhosphorus'],
+  total_nitrogen: ['total_nitrogen', 'tn', 'totalNitrogen'],
+  chlorophyll_a: ['chlorophyll_a', 'chlorophyll', 'chla', 'chlorophyllA'],
+  algae_density: ['algae_density', 'algae', 'algae_density_cells', 'algaeDensity']
+}
+
+const getMetricValue = (item, key) => {
+  const keys = metricKeyMap[key] || [key]
+  for (const field of keys) {
+    const value = item[field]
+    if (value !== null && value !== undefined && value !== '') {
+      return value
+    }
+  }
+  return null
+}
+
 const getQualityClass = (quality) => {
   const classMap = {
-    'Ⅰ': 'quality-excellent',  // 绿色 - 优
-    'Ⅱ': 'quality-excellent',  // 绿色 - 优
-    'Ⅲ': 'quality-good',       // 蓝色 - 良好
-    'Ⅳ': 'quality-fair',       // 黄色 - 轻度污染
-    'Ⅴ': 'quality-poor',       // 橙色 - 中度污染
-    '劣Ⅴ': 'quality-bad'       // 红色 - 重度污染
+    'Ⅰ': 'q1',
+    'Ⅱ': 'q2',
+    'Ⅲ': 'q3',
+    'Ⅳ': 'q4',
+    'Ⅴ': 'q5',
+    '劣Ⅴ': 'q6'
   }
-  return classMap[quality] || 'quality-unknown'
+  return classMap[quality] || 'q0'
 }
 
-// 获取数值样式类名
-const getValueClass = (field, value) => {
-  if (value === null || value === undefined) return 'value-null'
-
-  // 水温告警
-  if (field === 'temperature' && value > 30) return 'value-warning'
-
-  // pH告警
-  if (field === 'ph' && (value < 6.5 || value > 8.5)) return 'value-warning'
-
-  // 溶解氧告警
-  if (field === 'dissolved_oxygen' && value < 5) return 'value-warning'
-
-  return 'value-normal'
-}
-
-// 判断是否在线
 const isOnline = (timestamp) => {
   if (!timestamp) return false
   const now = new Date()
   const time = new Date(timestamp)
-  const diff = (now - time) / 1000 / 60 // 分钟差
-  return diff < 60 // 1小时内算在线
-}
-
-// 获取行样式
-const getRowClassName = ({ row }) => {
-  if (!isOnline(row.timestamp)) return 'row-offline'
-  return ''
-}
-
-// 计算表格高度 - 参考国家平台设计
-const updateTableHeight = () => {
-  const windowHeight = window.innerHeight
-  // 采用国家平台的固定高度布局设计
-  // 平台标题栏约90px + 进度条2px + 统计卡片约100px + 筛选卡片约70px + 更新日志约200px + padding约50px ≈ 510px
-  // 留出更多空间给表格，采用内部滚动
-  tableHeight.value = windowHeight - 500
+  const diff = (now - time) / 1000 / 60
+  return diff < 60
 }
 
 onMounted(() => {
   loadRealtimeData()
-  updateTableHeight()
-  window.addEventListener('resize', updateTableHeight)
 
-  // 启动自动刷新
   if (autoRefresh.value) {
     startProgressTimer()
     startRefreshTimer()
   }
+
+  // 添加点击外部关闭下拉的事件监听
+  document.addEventListener('click', handleClickOutside)
 })
 
 onUnmounted(() => {
   stopRefreshTimer()
   stopProgressTimer()
-  window.removeEventListener('resize', updateTableHeight)
+  document.removeEventListener('click', handleClickOutside)
 })
 </script>
 
 <style scoped lang="scss">
+$bg-gradient: linear-gradient(135deg, #e0e7ff 0%, #f5f7fb 100%);
+$glass-bg: rgba(255, 255, 255, 0.5);
+$glass-border: rgba(255, 255, 255, 0.55);
+$text-main: #1f2937;
+$text-sub: #64748b;
+
 .dashboard-page {
-  padding: 20px 32px;
-  // 参考国家平台，采用固定高度布局，内部滚动
+  min-height: 100%;
+  background: $bg-gradient;
+  color: $text-main;
+  font-family: "Sora", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+  position: relative;
+  overflow: hidden;
+}
+
+.fluid-bg {
+  position: absolute;
+  width: 100%;
   height: 100%;
+  background:
+    radial-gradient(circle at 0% 0%, rgba(79, 172, 254, 0.15) 0%, transparent 40%),
+    radial-gradient(circle at 100% 100%, rgba(99, 102, 241, 0.12) 0%, transparent 40%);
+  z-index: 0;
+}
+
+.dashboard-content {
+  padding: 36px 40px 48px;
+  position: relative;
+  z-index: 1;
+}
+
+.top-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 32px;
+
+  h1 {
+    font-size: 26px;
+    font-weight: 700;
+    margin: 0;
+    letter-spacing: -0.6px;
+  }
+
+  p {
+    color: $text-sub;
+    margin: 6px 0 0 0;
+    font-size: 13px;
+  }
+
+  .top-actions {
+    display: flex;
+    gap: 16px;
+
+    .action-btn {
+      background: $glass-bg;
+      border: 1px solid $glass-border;
+      border-radius: 12px;
+      padding: 8px 12px;
+      cursor: pointer;
+      color: $text-main;
+    }
+  }
+}
+
+.glass {
+  background: $glass-bg;
+  backdrop-filter: blur(16px);
+  border: 1px solid $glass-border;
+  border-radius: 24px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.04);
+}
+
+.metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 20px;
+  margin-bottom: 24px;
+
+  .metric-card {
+    padding: 20px 22px;
+
+    .metric-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+
+      .label {
+        font-size: 13px;
+        color: $text-sub;
+      }
+
+      .trend-tag {
+        font-size: 12px;
+        padding: 2px 8px;
+        border-radius: 20px;
+
+        &.up {
+          background: rgba(34, 197, 94, 0.2);
+          color: #16a34a;
+        }
+
+        &.down {
+          background: rgba(248, 113, 113, 0.2);
+          color: #ef4444;
+        }
+
+        &.flat {
+          background: rgba(148, 163, 184, 0.2);
+          color: #64748b;
+        }
+      }
+    }
+
+    .value {
+      font-size: 30px;
+      margin: 14px 0;
+      font-weight: 700;
+    }
+  }
+}
+
+.sparkline-svg {
+  width: 100%;
+  height: 32px;
+
+  polyline {
+    fill: none;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  .up {
+    stroke: #22c55e;
+  }
+
+  .down {
+    stroke: #ef4444;
+  }
+
+  .flat {
+    stroke: #94a3b8;
+  }
+}
+
+.content-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 20px;
+  margin-bottom: 20px;
+}
+
+.data-panel {
+  padding: 22px 24px;
+  width: 100%;
+  overflow: hidden;
+
+  .panel-header {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 16px;
+
+    h3 {
+      margin: 0;
+      font-size: 18px;
+    }
+
+    .status-sync {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      color: $text-sub;
+
+      .sync-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #cbd5f5;
+
+        &.active {
+          background: #22c55e;
+          box-shadow: 0 0 8px rgba(34, 197, 94, 0.6);
+        }
+      }
+    }
+  }
+}
+
+.panel-filters {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 14px;
+  align-items: center;
+
+  :deep(.el-input__wrapper) {
+    background: rgba(255, 255, 255, 0.6);
+  }
+}
+
+.cascader-wrapper {
+  position: relative;
+  z-index: 100;
+}
+
+.cascader-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 14px;
+  min-width: 120px;
+  border-radius: 8px;
+  border: 1px solid #c8c8c8;
+  background: #d9d9d9;
+  color: #1f2937;
+  font-weight: 600;
+  cursor: pointer;
+  transition: box-shadow 0.2s ease;
+
+  &.active {
+    box-shadow: 0 0 0 2px rgba(148, 163, 184, 0.4);
+  }
+}
+
+.cascader-trigger .trigger-text {
+  font-size: 14px;
+  white-space: nowrap;
+}
+
+.cascader-trigger .trigger-arrow {
+  margin-left: 10px;
+  transition: transform 0.2s ease;
+
+  &.rotated {
+    transform: rotate(180deg);
+  }
+}
+
+.cascader-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  display: flex;
+  background: #ffffff;
+  border-radius: 10px;
+  border: 1px solid #e5e7eb;
+  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.14);
+  overflow: hidden;
+  min-width: 360px;
+}
+
+.cascader-column {
+  min-width: 200px;
+  max-height: 320px;
   overflow-y: auto;
-  overflow-x: hidden;
+  padding: 8px;
+  border-right: 1px solid #f1f5f9;
 
   &::-webkit-scrollbar {
-    width: 8px;
+    width: 6px;
   }
 
   &::-webkit-scrollbar-thumb {
-    background: rgba(24, 144, 255, 0.3);
-    border-radius: 4px;
-
-    &:hover {
-      background: rgba(24, 144, 255, 0.5);
-    }
-  }
-
-  &::-webkit-scrollbar-track {
-    background: rgba(24, 144, 255, 0.05);
+    background: #d1d5db;
+    border-radius: 3px;
   }
 }
 
-// 平台标题栏
-.platform-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 20px 24px;
-  margin-bottom: 16px;
-  background: linear-gradient(135deg, #1e3a8a 0%, #1e40af 100%);
-  border-radius: 12px;
-  color: white;
-  box-shadow: 0 4px 20px rgba(30, 58, 138, 0.3);
-
-  .platform-title {
-    h1 {
-      font-size: 24px;
-      font-weight: 700;
-      margin: 0 0 4px 0;
-      letter-spacing: 1px;
-    }
-
-    p {
-      font-size: 12px;
-      margin: 0;
-      opacity: 0.8;
-      font-weight: 300;
-      letter-spacing: 0.5px;
-    }
-  }
-
-  .header-controls {
-    .refresh-info {
-      display: flex;
-      align-items: center;
-      gap: 16px;
-
-      .auto-refresh-control {
-        display: flex;
-        align-items: center;
-        padding-right: 16px;
-        border-right: 1px solid rgba(255, 255, 255, 0.2);
-
-        :deep(.el-switch) {
-          --el-switch-on-color: #52c41a;
-          --el-switch-off-color: rgba(255, 255, 255, 0.3);
-        }
-
-        :deep(.el-select) {
-          .el-input__wrapper {
-            background: rgba(255, 255, 255, 0.15);
-            border-color: rgba(255, 255, 255, 0.2);
-            color: white;
-
-            .el-input__inner {
-              color: white;
-            }
-
-            .el-input__suffix {
-              color: white;
-            }
-          }
-        }
-      }
-
-      .update-status {
-        display: flex;
-        flex-direction: column;
-        align-items: flex-end;
-        gap: 2px;
-
-        .last-update,
-        .next-update {
-          font-size: 11px;
-          white-space: nowrap;
-        }
-
-        .last-update {
-          color: rgba(255, 255, 255, 0.8);
-        }
-
-        .next-update {
-          color: #52c41a;
-          font-weight: 600;
-        }
-      }
-
-      :deep(.el-button) {
-        background: rgba(255, 255, 255, 0.2);
-        border-color: rgba(255, 255, 255, 0.3);
-        color: white;
-
-        &:hover {
-          background: rgba(255, 255, 255, 0.3);
-        }
-      }
-    }
-  }
-}
-
-// 数据统计卡片
-.stats-cards {
+.cascader-main {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
-  gap: 16px;
-  margin-bottom: 20px;
+  grid-template-columns: repeat(2, minmax(140px, 1fr));
+  gap: 4px;
 }
 
-.stat-card {
+.cascader-main .cascader-item {
+  justify-content: space-between;
+}
+
+.cascader-sub {
+  min-width: 220px;
+  border-right: none;
+}
+
+.cascader-item {
   display: flex;
   align-items: center;
-  padding: 16px 20px;
-  border-radius: 12px;
-  background: white;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
-  transition: all 0.3s ease;
+  justify-content: space-between;
+  padding: 9px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  color: #1f2937;
+  cursor: pointer;
+  transition: background 0.2s ease;
 
   &:hover {
-    transform: translateY(-4px);
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.12);
+    background: rgba(15, 23, 42, 0.06);
   }
 
-  .stat-icon {
-    width: 48px;
-    height: 48px;
-    border-radius: 12px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 24px;
-    margin-right: 16px;
-    flex-shrink: 0;
-  }
-
-  .stat-content {
-    flex: 1;
-    min-width: 0;
-
-    .stat-value {
-      font-size: 24px;
-      font-weight: 700;
-      line-height: 1;
-      margin-bottom: 6px;
-    }
-
-    .stat-label {
-      font-size: 12px;
-      color: #6B7280;
-    }
-  }
-
-  &.stat-total .stat-icon {
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    color: white;
-  }
-  .stat-total .stat-value { color: #667eea; }
-
-  &.stat-excellent .stat-icon {
-    background: linear-gradient(135deg, #52c41a 0%, #73d13d 100%);
-    color: white;
-  }
-  .stat-excellent .stat-value { color: #52c41a; }
-
-  &.stat-good .stat-icon {
-    background: linear-gradient(135deg, #1890ff 0%, #40a9ff 100%);
-    color: white;
-  }
-  .stat-good .stat-value { color: #1890ff; }
-
-  &.stat-poor .stat-icon {
-    background: linear-gradient(135deg, #ff4d4f 0%, #ff7875 100%);
-    color: white;
-  }
-  .stat-poor .stat-value { color: #ff4d4f; }
-
-  &.stat-online .stat-icon {
-    background: linear-gradient(135deg, #13c2c2 0%, #36cfc9 100%);
-    color: white;
-  }
-  .stat-online .stat-value { color: #13c2c2; }
-}
-
-// 刷新进度条
-.refresh-progress {
-  height: 2px;
-  background: rgba(24, 144, 255, 0.1);
-  border-radius: 1px;
-  overflow: hidden;
-  margin-bottom: 16px;
-
-  .progress-bar {
-    height: 100%;
-    background: linear-gradient(90deg, #1890FF 0%, #52C41A 100%);
-    transition: width 0.1s linear;
-  }
-}
-
-.filter-card {
-  padding: 16px 20px;
-  margin-bottom: 20px;
-}
-
-.data-table {
-  padding: 16px;
-
-  // 水质类别徽章
-  .quality-badge {
-    display: inline-block;
-    padding: 4px 12px;
-    border-radius: 12px;
-    font-size: 13px;
+  &.active {
+    background: rgba(15, 23, 42, 0.08);
     font-weight: 600;
-
-    &.quality-excellent {
-      background: #f0f9ff;
-      color: #52c41a;
-      border: 1px solid #b7eb8f;
-    }
-
-    &.quality-good {
-      background: #e6f7ff;
-      color: #1890ff;
-      border: 1px solid #91d5ff;
-    }
-
-    &.quality-fair {
-      background: #fffbe6;
-      color: #faad14;
-      border: 1px solid #ffe58f;
-    }
-
-    &.quality-poor {
-      background: #fff7e6;
-      color: #fa8c16;
-      border: 1px solid #ffd591;
-    }
-
-    &.quality-bad {
-      background: #fff1f0;
-      color: #ff4d4f;
-      border: 1px solid #ffccc7;
-    }
-
-    &.quality-unknown {
-      background: #f5f5f5;
-      color: #8c8c8c;
-      border: 1px solid #d9d9d9;
-    }
   }
 
-  .station-name {
-    font-weight: 500;
-    color: #1F2937;
-  }
-
-  .status-indicator {
-    display: flex;
-    justify-content: center;
-    align-items: center;
-
-    .status-dot {
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-      background: #D1D5DB;
-    }
-
-    &.status-online .status-dot {
-      background: #52C41A;
-      box-shadow: 0 0 6px rgba(82, 196, 26, 0.5);
-    }
-  }
-
-  .value-normal {
-    color: #1F2937;
-  }
-
-  .value-warning {
-    color: #FF4D4F;
-    font-weight: 500;
-  }
-
-  .value-null {
-    color: #9CA3AF;
-  }
-
-  // 数据更新动画
-  .data-updated {
-    animation: dataUpdate 1s ease-out;
+  .item-arrow {
+    color: #c7c7c7;
+    font-size: 10px;
   }
 }
 
-@keyframes dataUpdate {
-  0% {
-    background: rgba(82, 196, 26, 0.3);
-    color: #1890FF;
-  }
-  100% {
-    background: transparent;
-    color: inherit;
-  }
-}
-
-.table-footer {
+.segment-search {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  margin-top: 16px;
-  padding-top: 16px;
-  border-top: 1px solid rgba(24, 144, 255, 0.1);
+  padding: 8px 12px;
+  padding-right: 0;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  background: #ffffff;
+  min-width: 220px;
 
-  .total-info {
-    font-size: 13px;
-    color: #6B7280;
+  input {
+    border: none;
+    outline: none;
+    width: 100%;
+    font-size: 14px;
+    color: #1f2937;
 
-    .update-hint {
-      color: #52C41A;
-      font-weight: 500;
-    }
-  }
-
-  .auto-refresh-status {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-
-    .refresh-interval {
-      font-size: 12px;
-      color: #6B7280;
+    &::placeholder {
+      color: #9ca3af;
     }
   }
 }
 
-// 更新日志
+.search-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 16px;
+  margin-left: 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #1f2937;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+
+  &:hover {
+    background: #f9fafb;
+    border-color: #c7c7c7;
+    transform: translateY(-1px);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+  }
+
+  &:active {
+    transform: translateY(0);
+    box-shadow: none;
+  }
+
+  .search-icon {
+    margin-right: 6px;
+    font-size: 16px;
+  }
+}
+
+.filter-loading {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: rgba(255, 255, 255, 0.95);
+  border: 1px solid rgba(255, 255, 255, 0.8);
+  border-radius: 12px;
+  padding: 16px 24px;
+  font-size: 14px;
+  color: #1f2937;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+  backdrop-filter: blur(8px);
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  white-space: nowrap;
+
+  &::before {
+    content: '';
+    display: inline-block;
+    width: 16px;
+    height: 16px;
+    border: 2px solid #e5e7eb;
+    border-top-color: #3b82f6;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+// 给实时数据列表区域添加相对定位，让加载弹窗可以定位
+.realtime-section {
+  position: relative;
+}
+
+.river-item {
+  font-size: 14px;
+  padding: 12px 16px;
+}
+
+.province-select {
+  :deep(.el-input__wrapper) {
+    background: #d9d9d9;
+    border: 1px solid #c8c8c8;
+    box-shadow: none;
+    border-radius: 8px;
+    font-weight: 600;
+    color: #1f2937;
+  }
+
+  :deep(.el-input__inner::placeholder) {
+    color: #374151;
+  }
+}
+
+.river-select {
+  :deep(.el-input__wrapper) {
+    background: #ffffff;
+    border: 1px solid #d1d5db;
+    box-shadow: none;
+    border-radius: 8px;
+  }
+
+  :deep(.el-input__inner::placeholder) {
+    color: #9ca3af;
+  }
+}
+
+.custom-list {
+  overflow-x: auto;
+  overflow-y: hidden;
+  width: 100%;
+  max-width: 100%;
+  padding-bottom: 6px;
+  position: relative;
+
+  .list-header {
+    display: grid;
+    grid-template-columns:
+      80px
+      100px
+      160px
+      90px
+      130px
+      80px
+      80px
+      110px
+      110px
+      90px
+      140px
+      90px
+      90px
+      90px
+      110px
+      120px
+      60px;
+    padding: 10px 0;
+    font-size: 12px;
+    color: #94a3b8;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+    min-width: 1600px;
+    width: max-content;
+  }
+
+  .list-body {
+    position: relative;
+    height: clamp(300px, 42vh, 520px);
+    overflow: hidden;
+    min-width: 1600px;
+    width: max-content;
+    border-radius: 12px;
+    box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.06);
+
+    &.scrolling .list-track {
+      animation: slowScrollUp var(--scroll-duration) linear infinite;
+    }
+  }
+
+  .list-body:hover .list-track {
+    animation-play-state: paused;
+  }
+
+  .list-track {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+  }
+
+  .list-item {
+    display: grid;
+    grid-template-columns:
+      80px
+      100px
+      160px
+      90px
+      130px
+      80px
+      80px
+      110px
+      110px
+      90px
+      140px
+      90px
+      90px
+      90px
+      110px
+      120px
+      60px;
+    padding: 16px 0;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.03);
+    align-items: center;
+    font-size: 14px;
+    transition: 0.2s;
+    min-width: 1600px;
+    width: max-content;
+
+    &:hover {
+      background: rgba(255, 255, 255, 0.3);
+      transform: scale(1.01);
+    }
+
+    .name {
+      font-weight: 600;
+      color: #1f2937;
+    }
+
+    .cell {
+      color: #475569;
+      font-size: 12px;
+    }
+
+    .quality-text {
+      &.q1 {
+        color: #16a34a;
+      }
+
+      &.q2 {
+        color: #0284c7;
+      }
+
+      &.q3 {
+        color: #f59e0b;
+      }
+
+      &.q4 {
+        color: #f97316;
+      }
+
+      &.q5 {
+        color: #ef4444;
+      }
+
+      &.q6 {
+        color: #b91c1c;
+      }
+
+      &.q0 {
+        color: #94a3b8;
+      }
+    }
+
+    .indicator {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+
+      &.online {
+        background: #22c55e;
+      }
+
+      &.offline {
+        background: #94a3b8;
+      }
+    }
+  }
+}
+
+
 .update-log {
-  margin-top: 20px;
   padding: 16px 20px;
-  max-height: 250px;
-  overflow: hidden;
 
   .log-header {
     display: flex;
@@ -980,12 +1225,12 @@ onUnmounted(() => {
     align-items: center;
     margin-bottom: 12px;
     padding-bottom: 12px;
-    border-bottom: 1px solid rgba(24, 144, 255, 0.1);
+    border-bottom: 1px solid rgba(15, 23, 42, 0.08);
 
     h4 {
       font-size: 14px;
       font-weight: 600;
-      color: #1F2937;
+      color: #1f2937;
       margin: 0;
     }
   }
@@ -1008,7 +1253,7 @@ onUnmounted(() => {
     display: flex;
     align-items: center;
     padding: 8px 0;
-    border-bottom: 1px solid rgba(24, 144, 255, 0.05);
+    border-bottom: 1px solid rgba(15, 23, 42, 0.04);
     font-size: 12px;
     transition: all 0.3s ease;
 
@@ -1017,18 +1262,18 @@ onUnmounted(() => {
     }
 
     &.log-item-new {
-      background: rgba(82, 196, 26, 0.05);
+      background: rgba(22, 163, 74, 0.08);
       padding: 8px 12px;
       border-radius: 6px;
       margin: 0 -12px;
 
       .log-time {
-        color: #52C41A;
+        color: #16a34a;
         font-weight: 600;
       }
 
       .log-message {
-        color: #1F2937;
+        color: #1f2937;
         font-weight: 500;
       }
 
@@ -1036,16 +1281,77 @@ onUnmounted(() => {
     }
 
     .log-time {
-      color: #6B7280;
+      color: #6b7280;
       margin-right: 12px;
       min-width: 70px;
-      font-family: 'Monaco', 'Consolas', monospace;
+      font-family: "Monaco", "Consolas", monospace;
     }
 
     .log-message {
-      color: #6B7280;
+      color: #6b7280;
       flex: 1;
     }
+  }
+}
+
+.progress-ring {
+  width: 26px;
+  height: 26px;
+
+  &.small {
+    width: 22px;
+    height: 22px;
+  }
+
+  .ring-bg {
+    fill: none;
+    stroke: #e5e7eb;
+    stroke-width: 3;
+  }
+
+  .ring-fill {
+    fill: none;
+    stroke: #2563eb;
+    stroke-width: 3;
+    stroke-linecap: round;
+    transition: stroke-dasharray 0.3s ease;
+  }
+}
+
+.data-updated {
+  animation: dataUpdate 1s ease-out;
+}
+
+.spinning {
+  animation: rotate 1s linear infinite;
+}
+
+@keyframes slowScrollUp {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(-50%);
+  }
+}
+
+@keyframes dataUpdate {
+  0% {
+    background: rgba(82, 196, 26, 0.2);
+    color: #2563eb;
+  }
+  100% {
+    background: transparent;
+    color: inherit;
+  }
+}
+
+@keyframes rotate {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
   }
 }
 
@@ -1060,79 +1366,59 @@ onUnmounted(() => {
   }
 }
 
-// 刷新按钮旋转动画
-.refreshing {
-  animation: rotate 0.5s linear;
-}
-
-@keyframes rotate {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-// 离线行样式
-:deep(.el-table .row-offline) {
-  background: rgba(24, 144, 255, 0.02);
-  opacity: 0.7;
-}
-
-// 响应式
-@media (max-width: 768px) {
-  .dashboard-page {
-    padding: 16px;
-  }
-
-  .platform-header {
-    flex-direction: column;
-    gap: 16px;
-    padding: 16px;
-
-    .platform-title h1 {
-      font-size: 18px;
-    }
-
-    .header-controls .refresh-info {
-      flex-wrap: wrap;
-      gap: 8px;
-
-      .auto-refresh-control {
-        border-right: none;
-        padding-right: 0;
-      }
-    }
-  }
-
-  .stats-cards {
+@media (max-width: 1200px) {
+  .metrics-grid {
     grid-template-columns: repeat(2, 1fr);
   }
-}
 
-@media (max-width: 480px) {
-  .stats-cards {
+  .content-grid {
     grid-template-columns: 1fr;
   }
 }
 
-// 筛选卡片响应式
-@media (max-width: 768px) {
-  .filter-card {
-    .el-form {
-      flex-direction: column;
+@media (max-width: 900px) {
+  .dashboard-content {
+    padding: 24px 18px 32px;
+  }
 
-      .el-form-item {
-        margin-right: 0;
-        margin-bottom: 12px;
-        width: 100%;
+  .metrics-grid {
+    grid-template-columns: 1fr;
+  }
+}
 
-        .el-select,
-        .el-input {
-          width: 100% !important;
-        }
-      }
+@media (max-width: 640px) {
+  .top-bar {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 14px;
+  }
+
+  .panel-filters {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .custom-list {
+    .list-header,
+    .list-item {
+      grid-template-columns:
+        80px
+        100px
+        160px
+        130px
+        90px
+        80px
+        80px
+        110px
+        110px
+        90px
+        140px
+        90px
+        90px
+        90px
+        110px
+        120px
+        60px;
     }
   }
 }

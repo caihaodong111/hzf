@@ -19,6 +19,7 @@ from core.data_generator import SensorDataGenerator
 from core.open_data_provider import OpenWaterDataService
 from core.national_water_data import NationalWaterDataService
 from core.data_transformer import DataTransformer, DatabaseSync
+from core.city_matcher import matches_city
 
 
 class DeviceViewSet(viewsets.ReadOnlyModelViewSet):
@@ -104,16 +105,18 @@ class SensorDataViewSet(viewsets.ReadOnlyModelViewSet):
 
     @action(detail=False, methods=['get'])
     def realtime(self, request):
-        """获取实时数据 - 通过数据转换层统一格式"""
+        """获取实时数据 - 只使用真实数据源"""
         count = int(request.query_params.get('count', 100))
         area_id = request.query_params.get('area_id', '')
         river_id = request.query_params.get('river_id', '')
         search_name = request.query_params.get('search_name', '')
+        city_name = request.query_params.get('city_name', '')  # 添加城市参数
         force_refresh_param = request.query_params.get('force_refresh', '')
         force_refresh = str(force_refresh_param).lower() in {"1", "true", "yes"}
 
         raw_data = []
         source = None
+        total = 0
 
         # 优先使用国家水质数据
         if NationalWaterDataService.enabled():
@@ -122,11 +125,13 @@ class SensorDataViewSet(viewsets.ReadOnlyModelViewSet):
                 area_id=area_id,
                 river_id=river_id,
                 search_name=search_name,
+                city_name=city_name,  # 传递城市参数
                 force_refresh=force_refresh
             )
             raw_data = result.get("sensors", [])
             if raw_data:
                 source = 'national'
+                total = result.get("total", len(raw_data))
 
         # 其次使用外部数据源
         if not raw_data and OpenWaterDataService.enabled():
@@ -134,25 +139,16 @@ class SensorDataViewSet(viewsets.ReadOnlyModelViewSet):
             raw_data = result.get("sensors", [])
             if raw_data:
                 source = 'open'
+                total = len(raw_data)
 
-        # 最后使用模拟数据
-        if not raw_data:
-            result = SensorDataGenerator.generate_multi_sensors_realtime(count=count)
-            raw_data = result.get("sensors", [])
-            source = 'simulator'
+        # 不使用模拟数据 - 只返回真实数据
+        # 如果没有数据，返回空列表
 
         # 通过数据转换层统一格式
         sensors = []
         for item in raw_data:
             transformed = DataTransformer.transform_realtime_data(item, source)
             sensors.append(transformed)
-            # 同步到数据库（可选，避免每次请求都写入）
-            # DatabaseSync.sync_sensor_data(transformed, source)
-
-        # 获取总数
-        total = len(raw_data)
-        if 'total' in result:
-            total = result['total']
 
         return Response({
             'code': 200,

@@ -1,6 +1,7 @@
 <template>
-  <div class="devices-page">
-    <!-- 页面标题 -->
+  <div class="dashboard-page">
+    <div class="fluid-bg"></div>
+    <div class="dashboard-content">
     <div class="page-header">
       <h2>设备管理</h2>
       <p>查看和管理所有监测设备</p>
@@ -8,7 +9,7 @@
 
     <!-- 统计信息 -->
     <div class="stats-grid">
-      <div class="stat-card glass-card">
+      <div class="stat-card glass">
         <div class="stat-icon" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%)">
           <el-icon><icon-monitor /></el-icon>
         </div>
@@ -17,7 +18,7 @@
           <div class="stat-label">设备总数</div>
         </div>
       </div>
-      <div class="stat-card glass-card">
+      <div class="stat-card glass">
         <div class="stat-icon" style="background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%)">
           <el-icon><icon-circle-check /></el-icon>
         </div>
@@ -26,7 +27,7 @@
           <div class="stat-label">在线设备</div>
         </div>
       </div>
-      <div class="stat-card glass-card">
+      <div class="stat-card glass">
         <div class="stat-icon" style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%)">
           <el-icon><icon-circle-close /></el-icon>
         </div>
@@ -38,7 +39,7 @@
     </div>
 
     <!-- 设备列表 -->
-    <div class="devices-list glass-card">
+    <div class="devices-list glass">
       <div class="list-header">
         <h3>设备列表</h3>
         <div class="filters">
@@ -82,22 +83,17 @@
         </el-table-column>
       </el-table>
     </div>
+    </div>
   </div>
 </template>
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
 import { getDeviceList } from '@/api/sensors'
-import { Monitor, CircleCheck, CircleClose } from '@element-plus/icons-vue'
 
-const router = useRouter()
 const devices = ref([])
 const loading = ref(false)
 const filterType = ref('')
-const iconMonitor = Monitor
-const iconCircleCheck = CircleCheck
-const iconCircleClose = CircleClose
 
 const totalDevices = computed(() => devices.value.length)
 const onlineDevices = computed(() => devices.value.filter(d => d.status === 'online').length)
@@ -128,8 +124,43 @@ onMounted(() => {
 </script>
 
 <style scoped lang="scss">
-.devices-page {
-  padding: 24px 32px;
+$bg-gradient: linear-gradient(135deg, #e0e7ff 0%, #f5f7fb 100%);
+$glass-bg: rgba(255, 255, 255, 0.5);
+$glass-border: rgba(255, 255, 255, 0.55);
+$text-main: #1f2937;
+$text-sub: #64748b;
+
+.dashboard-page {
+  min-height: 100%;
+  background: $bg-gradient;
+  color: $text-main;
+  font-family: "Sora", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+  position: relative;
+  overflow: hidden;
+}
+
+.fluid-bg {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  background:
+    radial-gradient(circle at 0% 0%, rgba(79, 172, 254, 0.15) 0%, transparent 40%),
+    radial-gradient(circle at 100% 100%, rgba(99, 102, 241, 0.12) 0%, transparent 40%);
+  z-index: 0;
+}
+
+.dashboard-content {
+  padding: 36px 40px 48px;
+  position: relative;
+  z-index: 1;
+}
+
+.glass {
+  background: $glass-bg;
+  backdrop-filter: blur(16px);
+  border: 1px solid $glass-border;
+  border-radius: 24px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.04);
 }
 
 .page-header {
@@ -138,13 +169,13 @@ onMounted(() => {
   h2 {
     font-size: 28px;
     font-weight: 600;
-    color: #1F2937;
+    color: $text-main;
     margin-bottom: 8px;
   }
 
   p {
     font-size: 14px;
-    color: #6B7280;
+    color: $text-sub;
   }
 }
 
@@ -176,14 +207,14 @@ onMounted(() => {
 .stat-value {
   font-size: 32px;
   font-weight: 600;
-  color: #1F2937;
+  color: $text-main;
   line-height: 1;
   margin-bottom: 4px;
 }
 
 .stat-label {
   font-size: 14px;
-  color: #6B7280;
+  color: $text-sub;
 }
 
 .devices-list {
@@ -210,8 +241,8 @@ onMounted(() => {
 }
 
 @media (max-width: 768px) {
-  .devices-page {
-    padding: 16px;
+  .dashboard-content {
+    padding: 24px 18px 32px;
   }
 
   .stats-grid {

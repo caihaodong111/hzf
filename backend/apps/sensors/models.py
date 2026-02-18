@@ -104,6 +104,10 @@ class SensorData(models.Model):
                                          verbose_name='总磷(mg/L)')
     total_nitrogen = models.DecimalField(max_digits=6, decimal_places=3, null=True, blank=True,
                                        verbose_name='总氮(mg/L)')
+    chlorophyll_a = models.DecimalField(max_digits=6, decimal_places=3, null=True, blank=True,
+                                      verbose_name='叶绿素a(mg/L)')
+    algae_density = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True,
+                                      verbose_name='藻密度(cells/L)')
 
     # 数据来源标识
     data_source = models.CharField(max_length=50, blank=True, null=True,
@@ -187,6 +191,10 @@ class SensorDataSnapshot(models.Model):
                                           verbose_name='总磷(mg/L)')
     total_nitrogen = models.DecimalField(max_digits=6, decimal_places=3, null=True, blank=True,
                                         verbose_name='总氮(mg/L)')
+    chlorophyll_a = models.DecimalField(max_digits=6, decimal_places=3, null=True, blank=True,
+                                      verbose_name='叶绿素a(mg/L)')
+    algae_density = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True,
+                                      verbose_name='藻密度(cells/L)')
 
     # 数据来源和快照时间
     data_source = models.CharField(max_length=50, blank=True, null=True,

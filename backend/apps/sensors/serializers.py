@@ -29,7 +29,8 @@ class SensorDataSerializer(serializers.ModelSerializer):
         fields = ['id', 'device_id', 'device_name', 'temperature', 'ph',
                   'dissolved_oxygen', 'conductivity', 'turbidity', 'salinity',
                   'water_quality', 'permanganate', 'ammonia_nitrogen',
-                  'total_phosphorus', 'total_nitrogen', 'data_source',
+                  'total_phosphorus', 'total_nitrogen', 'chlorophyll_a',
+                  'algae_density', 'data_source',
                   'recorded_at', 'created_at']
         read_only_fields = ['created_at']
 
@@ -53,9 +54,12 @@ class RealtimeDataSerializer(serializers.Serializer):
 
     # 扩展参数
     permanganate = serializers.FloatField(allow_null=True, required=False)
+    permanganate_index = serializers.FloatField(allow_null=True, required=False)
     ammonia_nitrogen = serializers.FloatField(allow_null=True, required=False)
     total_phosphorus = serializers.FloatField(allow_null=True, required=False)
     total_nitrogen = serializers.FloatField(allow_null=True, required=False)
+    chlorophyll_a = serializers.FloatField(allow_null=True, required=False)
+    algae_density = serializers.FloatField(allow_null=True, required=False)
 
     # 时间戳
     timestamp = serializers.CharField()

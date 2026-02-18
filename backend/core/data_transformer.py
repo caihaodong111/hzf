@@ -3,8 +3,9 @@
 负责将不同数据源的数据转换为统一格式
 """
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 from decimal import Decimal
+import re
 
 
 class DataTransformer:
@@ -19,6 +20,79 @@ class DataTransformer:
         '5': 'Ⅴ', 'Ⅴ': 'Ⅴ', 'V': 'Ⅴ',
         '6': '劣Ⅴ', '劣Ⅴ': '劣Ⅴ', '劣V': '劣Ⅴ', '>5': '劣Ⅴ'
     }
+
+    # 常见城市后缀
+    _CITY_SUFFIXES = ('自治州', '地区', '盟', '州', '市', '县', '区')
+    _COMMON_CITIES: Set[str] = set()
+
+    @classmethod
+    def _load_common_cities(cls) -> None:
+        """加载常见城市列表（从provinceCascadeOptions）"""
+        if cls._COMMON_CITIES:
+            return
+
+        # 主要城市列表（来自前端的provinceCascadeOptions）
+        cities = [
+            # 直辖市
+            '东城区', '西城区', '朝阳区', '海淀区', '丰台区', '石景山区',
+            '黄浦区', '徐汇区', '浦东新区', '静安区', '长宁区',
+            '和平区', '河东区', '河西区', '南开区', '河北区', '红桥区',
+            # 省会城市
+            '石家庄市', '唐山市', '保定市', '廊坊市', '邯郸市', '秦皇岛市',
+            '太原市', '大同市', '长治市', '临汾市', '运城市', '晋中市',
+            '呼和浩特市', '包头市', '鄂尔多斯市', '赤峰市', '呼伦贝尔市',
+            '沈阳市', '大连市', '长春市', '吉林市', '哈尔滨市', '齐齐哈尔市',
+            '南京市', '苏州市', '无锡市', '常州市', '南通市',
+            '杭州市', '宁波市', '温州市', '嘉兴市', '绍兴市',
+            '合肥市', '芜湖市', '马鞍山市', '蚌埠市', '滁州市',
+            '福州市', '厦门市', '南昌市', '济南市', '青岛市',
+            '郑州市', '洛阳市', '开封市', '安阳市', '许昌市',
+            '武汉市', '宜昌市', '襄阳市', '黄石市', '荆州市',
+            '长沙市', '株洲市', '湘潭市', '衡阳市', '岳阳市',
+            '广州市', '深圳市', '佛山市', '东莞市', '珠海市',
+            '南宁市', '桂林市', '柳州市', '北海市', '玉林市',
+            '海口市', '三亚市',
+            '成都市', '绵阳市', '德阳市', '乐山市', '泸州市',
+            '贵阳市', '遵义市', '六盘水市', '安顺市', '毕节市',
+            '昆明市', '曲靖市', '大理州', '玉溪市', '昭通市',
+            '拉萨市', '西安市', '咸阳市', '宝鸡市', '渭南市', '延安市',
+            '兰州市', '天水市', '酒泉市', '张掖市', '武威市',
+            '西宁市', '银川市', '乌鲁木齐市', '克拉玛依市',
+        ]
+        cls._COMMON_CITIES = set(cities)
+
+    @classmethod
+    def extract_city_from_name(cls, device_name: str, province: str = None) -> Optional[str]:
+        """从断面名称中提取城市信息
+
+        Args:
+            device_name: 断面名称
+            province: 省份（可选，用于缩小匹配范围）
+
+        Returns:
+            提取的城市名称，如果没有匹配则返回None
+        """
+        cls._load_common_cities()
+
+        if not device_name:
+            return None
+
+        device_name_clean = device_name.strip()
+
+        # 直接匹配完整城市名
+        for city in cls._COMMON_CITIES:
+            if city in device_name_clean:
+                return city
+
+        # 尝试匹配不带后缀的城市名
+        for city in cls._COMMON_CITIES:
+            for suffix in cls._CITY_SUFFIXES:
+                if city.endswith(suffix) and len(city) > len(suffix):
+                    city_without_suffix = city[:-len(suffix)]
+                    if city_without_suffix in device_name_clean:
+                        return city
+
+        return None
 
     # 告警类型映射
     ALERT_TYPE_MAP = {
@@ -83,10 +157,13 @@ class DataTransformer:
         Returns:
             统一格式的数据
         """
+        device_name = data.get('device_name')
+        province = data.get('province')
+
         transformed = {
             'data_source': source,
             'device_id': data.get('device_id'),
-            'device_name': data.get('device_name'),
+            'device_name': device_name,
             'location': data.get('location'),
             'timestamp': data.get('timestamp') or data.get('recorded_at'),
         }
@@ -95,7 +172,7 @@ class DataTransformer:
         if source == 'national':
             # 国家水质数据
             transformed.update({
-                'province': data.get('province'),
+                'province': province,
                 'river_basin': data.get('river_basin'),
                 'water_quality': cls.normalize_water_quality(data.get('water_quality')),
                 'temperature': cls._to_float(data.get('temperature')),
@@ -104,9 +181,12 @@ class DataTransformer:
                 'conductivity': cls._to_float(data.get('conductivity')),
                 'turbidity': cls._to_float(data.get('turbidity')),
                 'permanganate': cls._to_float(data.get('permanganate')),
+                'permanganate_index': cls._to_float(data.get('permanganate')),
                 'ammonia_nitrogen': cls._to_float(data.get('ammonia_nitrogen')),
                 'total_phosphorus': cls._to_float(data.get('total_phosphorus')),
                 'total_nitrogen': cls._to_float(data.get('total_nitrogen')),
+                'chlorophyll_a': cls._to_float(data.get('chlorophyll_a')),
+                'algae_density': cls._to_float(data.get('algae_density')),
             })
 
         elif source == 'open':
@@ -116,6 +196,13 @@ class DataTransformer:
                 'ph': cls._to_float(data.get('ph')),
                 'dissolved_oxygen': cls._to_float(data.get('dissolved_oxygen')),
                 'salinity': cls._to_float(data.get('salinity')),
+                'permanganate': cls._to_float(data.get('permanganate')),
+                'permanganate_index': cls._to_float(data.get('permanganate')),
+                'ammonia_nitrogen': cls._to_float(data.get('ammonia_nitrogen')),
+                'total_phosphorus': cls._to_float(data.get('total_phosphorus')),
+                'total_nitrogen': cls._to_float(data.get('total_nitrogen')),
+                'chlorophyll_a': cls._to_float(data.get('chlorophyll_a')),
+                'algae_density': cls._to_float(data.get('algae_density')),
                 # 开放数据通常没有省份流域信息
                 'province': None,
                 'river_basin': None,
@@ -129,6 +216,13 @@ class DataTransformer:
                 'ph': cls._to_float(data.get('ph')),
                 'dissolved_oxygen': cls._to_float(data.get('dissolved_oxygen')),
                 'salinity': cls._to_float(data.get('salinity')),
+                'permanganate': cls._to_float(data.get('permanganate')),
+                'permanganate_index': cls._to_float(data.get('permanganate')),
+                'ammonia_nitrogen': cls._to_float(data.get('ammonia_nitrogen')),
+                'total_phosphorus': cls._to_float(data.get('total_phosphorus')),
+                'total_nitrogen': cls._to_float(data.get('total_nitrogen')),
+                'chlorophyll_a': cls._to_float(data.get('chlorophyll_a')),
+                'algae_density': cls._to_float(data.get('algae_density')),
                 'province': None,
                 'river_basin': None,
                 'water_quality': None,
@@ -146,7 +240,21 @@ class DataTransformer:
                 'conductivity': cls._to_float(data.get('conductivity')),
                 'turbidity': cls._to_float(data.get('turbidity')),
                 'salinity': cls._to_float(data.get('salinity')),
+                'permanganate': cls._to_float(data.get('permanganate')),
+                'permanganate_index': cls._to_float(data.get('permanganate')),
+                'ammonia_nitrogen': cls._to_float(data.get('ammonia_nitrogen')),
+                'total_phosphorus': cls._to_float(data.get('total_phosphorus')),
+                'total_nitrogen': cls._to_float(data.get('total_nitrogen')),
+                'chlorophyll_a': cls._to_float(data.get('chlorophyll_a')),
+                'algae_density': cls._to_float(data.get('algae_density')),
             })
+
+        # 尝试从断面名称中提取城市信息
+        city = cls.extract_city_from_name(device_name, province)
+        if city:
+            transformed['city'] = city
+        else:
+            transformed['city'] = data.get('city')  # 使用原始数据中的城市字段（如果有）
 
         return transformed
 
@@ -343,6 +451,8 @@ class DatabaseSync:
             'ammonia_nitrogen': DataTransformer._to_float(data.get('ammonia_nitrogen')),
             'total_phosphorus': DataTransformer._to_float(data.get('total_phosphorus')),
             'total_nitrogen': DataTransformer._to_float(data.get('total_nitrogen')),
+            'chlorophyll_a': DataTransformer._to_float(data.get('chlorophyll_a')),
+            'algae_density': DataTransformer._to_float(data.get('algae_density')),
             'data_source': source,
             'recorded_at': recorded_at,
         }

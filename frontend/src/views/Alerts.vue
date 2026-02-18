@@ -1,6 +1,7 @@
 <template>
-  <div class="alerts-page">
-    <!-- 页面标题 -->
+  <div class="dashboard-page">
+    <div class="fluid-bg"></div>
+    <div class="dashboard-content">
     <div class="page-header">
       <h2>预警中心</h2>
       <p>实时监控和处理系统告警</p>
@@ -8,7 +9,7 @@
 
     <!-- 统计卡片 -->
     <div class="stats-grid">
-      <div class="stat-card glass-card">
+      <div class="stat-card glass">
         <div class="stat-icon" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%)">
           <el-icon><icon-bell /></el-icon>
         </div>
@@ -17,7 +18,7 @@
           <div class="stat-label">总告警数</div>
         </div>
       </div>
-      <div class="stat-card glass-card">
+      <div class="stat-card glass">
         <div class="stat-icon" style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%)">
           <el-icon><icon-warning /></el-icon>
         </div>
@@ -26,7 +27,7 @@
           <div class="stat-label">严重告警</div>
         </div>
       </div>
-      <div class="stat-card glass-card">
+      <div class="stat-card glass">
         <div class="stat-icon" style="background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)">
           <el-icon><icon-warning-filled /></el-icon>
         </div>
@@ -35,7 +36,7 @@
           <div class="stat-label">警告告警</div>
         </div>
       </div>
-      <div class="stat-card glass-card">
+      <div class="stat-card glass">
         <div class="stat-icon" style="background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%)">
           <el-icon><icon-circle-check /></el-icon>
         </div>
@@ -47,7 +48,7 @@
     </div>
 
     <!-- 告警列表 -->
-    <div class="alerts-list glass-card">
+    <div class="alerts-list glass">
       <div class="list-header">
         <h3>告警列表</h3>
         <el-button type="primary" size="small" @click="loadAlerts">刷新</el-button>
@@ -93,16 +94,15 @@
         </el-table-column>
       </el-table>
     </div>
+    </div>
   </div>
 </template>
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
 import { getAlertList } from '@/api/alerts'
 import { ElMessage } from 'element-plus'
 
-const router = useRouter()
 const alerts = ref([])
 const loading = ref(false)
 
@@ -159,8 +159,43 @@ onMounted(() => {
 </script>
 
 <style scoped lang="scss">
-.alerts-page {
-  padding: 24px 32px;
+$bg-gradient: linear-gradient(135deg, #e0e7ff 0%, #f5f7fb 100%);
+$glass-bg: rgba(255, 255, 255, 0.5);
+$glass-border: rgba(255, 255, 255, 0.55);
+$text-main: #1f2937;
+$text-sub: #64748b;
+
+.dashboard-page {
+  min-height: 100%;
+  background: $bg-gradient;
+  color: $text-main;
+  font-family: "Sora", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+  position: relative;
+  overflow: hidden;
+}
+
+.fluid-bg {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  background:
+    radial-gradient(circle at 0% 0%, rgba(79, 172, 254, 0.15) 0%, transparent 40%),
+    radial-gradient(circle at 100% 100%, rgba(99, 102, 241, 0.12) 0%, transparent 40%);
+  z-index: 0;
+}
+
+.dashboard-content {
+  padding: 36px 40px 48px;
+  position: relative;
+  z-index: 1;
+}
+
+.glass {
+  background: $glass-bg;
+  backdrop-filter: blur(16px);
+  border: 1px solid $glass-border;
+  border-radius: 24px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.04);
 }
 
 .page-header {
@@ -169,13 +204,13 @@ onMounted(() => {
   h2 {
     font-size: 28px;
     font-weight: 600;
-    color: #1F2937;
+    color: $text-main;
     margin-bottom: 8px;
   }
 
   p {
     font-size: 14px;
-    color: #6B7280;
+    color: $text-sub;
   }
 }
 
@@ -207,14 +242,14 @@ onMounted(() => {
 .stat-value {
   font-size: 32px;
   font-weight: 600;
-  color: #1F2937;
+  color: $text-main;
   line-height: 1;
   margin-bottom: 4px;
 }
 
 .stat-label {
   font-size: 14px;
-  color: #6B7280;
+  color: $text-sub;
 }
 
 .alerts-list {
@@ -230,7 +265,7 @@ onMounted(() => {
   h3 {
     font-size: 18px;
     font-weight: 600;
-    color: #1F2937;
+    color: $text-main;
     margin: 0;
   }
 }
@@ -242,8 +277,8 @@ onMounted(() => {
 }
 
 @media (max-width: 768px) {
-  .alerts-page {
-    padding: 16px;
+  .dashboard-content {
+    padding: 24px 18px 32px;
   }
 
   .stats-grid {

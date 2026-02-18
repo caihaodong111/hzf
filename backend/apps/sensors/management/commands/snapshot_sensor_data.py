@@ -127,6 +127,8 @@ class Command(BaseCommand):
                     'ammonia_nitrogen': self._to_decimal(transformed.get('ammonia_nitrogen')),
                     'total_phosphorus': self._to_decimal(transformed.get('total_phosphorus')),
                     'total_nitrogen': self._to_decimal(transformed.get('total_nitrogen')),
+                    'chlorophyll_a': self._to_decimal(transformed.get('chlorophyll_a')),
+                    'algae_density': self._to_decimal(transformed.get('algae_density')),
                     'data_source': source,
                     'snapshot_time': snapshot_time,
                 }

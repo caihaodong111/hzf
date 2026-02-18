@@ -6,9 +6,17 @@ import request from './index'
  * @param {string} areaId - 区域ID（省份）
  * @param {string} riverId - 流域ID
  * @param {string} searchName - 断面名称搜索
+ * @param {string} cityName - 城市名称
  * @param {boolean} forceRefresh - 是否强制刷新缓存
  */
-export function getRealtimeData(count = 10, areaId = '', riverId = '', searchName = '', forceRefresh = true) {
+export function getRealtimeData(
+  count = 10,
+  areaId = '',
+  riverId = '',
+  searchName = '',
+  cityName = '',
+  forceRefresh = true
+) {
   return request({
     url: '/sensors/data/realtime/',
     method: 'get',
@@ -17,6 +25,7 @@ export function getRealtimeData(count = 10, areaId = '', riverId = '', searchNam
       area_id: areaId,
       river_id: riverId,
       search_name: searchName,
+      city_name: cityName,
       force_refresh: forceRefresh ? 1 : 0
     }
   })
