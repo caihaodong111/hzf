@@ -168,6 +168,38 @@ DATABASES = {
 
 主题色采用蓝白色系，所有组件使用iOS风格的毛玻璃效果。
 
+### 公开水质数据接入（合规数据源）
+
+后端支持从公开数据源（CSV/JSON API）读取并替换假数据。通过环境变量配置：
+
+```bash
+# 开启公开数据源
+export OPEN_WATER_DATA_ENABLED=true
+
+# 数据源类型：csv 或 json
+export OPEN_WATER_DATA_SOURCE=csv
+
+# 公开数据URL（合规开放平台提供的CSV/JSON接口）
+export OPEN_WATER_DATA_URL="https://example.com/open-water-data.csv"
+
+# JSON数据列表路径（source_type=json时使用）
+export OPEN_WATER_DATA_JSON_PATH="data.list"
+
+# 字段映射（可按数据源列名调整，| 表示候选字段）
+export OPEN_WATER_DATA_FIELD_DEVICE_ID="站点编号|断面编号|MN"
+export OPEN_WATER_DATA_FIELD_DEVICE_NAME="断面名称|站点名称|监测断面"
+export OPEN_WATER_DATA_FIELD_LOCATION="所在地|区域|省份|城市|河流"
+export OPEN_WATER_DATA_FIELD_TIMESTAMP="监测时间|采样时间|时间"
+export OPEN_WATER_DATA_FIELD_TEMPERATURE="水温|温度"
+export OPEN_WATER_DATA_FIELD_PH="pH|PH"
+export OPEN_WATER_DATA_FIELD_DO="溶解氧|DO"
+export OPEN_WATER_DATA_FIELD_SALINITY="盐度|电导率|电导"
+```
+
+说明：
+- 开启后，`/api/v1/sensors/data/realtime/`、`/history/`、`/devices/`、`/dashboard/overview/` 会优先使用公开数据源。
+- 若公开数据不可用或字段不匹配，会自动回退到假数据生成器。
+
 ## 常见问题
 
 ### 1. 数据库连接失败

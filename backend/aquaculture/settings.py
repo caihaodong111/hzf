@@ -2,12 +2,19 @@
 Django settings for aquaculture project.
 """
 import os
+import json
 from pathlib import Path
 from datetime import timedelta
 
-# 使用PyMySQL替代mysqlclient
+# 修复Django 6.x的mysqlclient版本检查问题 - 必须在导入django.db.backends之前执行
+import sys
 import pymysql
+
+# 先安装pymysql作为MySQLdb
 pymysql.install_as_MySQLdb()
+
+# 然后设置版本号，使Django版本检查通过
+pymysql.version_info = (2, 2, 1)
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -31,13 +38,12 @@ INSTALLED_APPS = [
     'rest_framework.authtoken',
     'corsheaders',
     'django_filters',
-    'drf_yasg',
-    'django_celery_beat',
+    # 'drf_yasg',  # 暂时禁用以创建迁移
+    # 'django_celery_beat',
 
     # Local apps
     'apps.sensors',
     'apps.alerts',
-    'apps.devices',
     'apps.dashboard',
     'apps.users',
 ]
@@ -211,3 +217,49 @@ LOGGING = {
 
 # Create logs directory if it doesn't exist
 (BASE_DIR / 'logs').mkdir(exist_ok=True)
+
+# Open water data source configuration
+_open_headers = {
+    "User-Agent": os.environ.get("OPEN_WATER_DATA_UA", "Mozilla/5.0"),
+}
+_open_headers_env = os.environ.get("OPEN_WATER_DATA_HEADERS", "")
+if _open_headers_env:
+    try:
+        _open_headers.update(json.loads(_open_headers_env))
+    except json.JSONDecodeError:
+        pass
+
+OPEN_WATER_DATA = {
+    "enabled": os.environ.get("OPEN_WATER_DATA_ENABLED", "false").lower() == "true",
+    "source_type": os.environ.get("OPEN_WATER_DATA_SOURCE", "csv").lower(),
+    "url": os.environ.get("OPEN_WATER_DATA_URL", ""),
+    "timeout": int(os.environ.get("OPEN_WATER_DATA_TIMEOUT", "15")),
+    "cache_minutes": int(os.environ.get("OPEN_WATER_DATA_CACHE_MINUTES", "30")),
+    "json_path": os.environ.get("OPEN_WATER_DATA_JSON_PATH", ""),
+    "time_formats": [
+        "%Y-%m-%d %H:%M:%S",
+        "%Y/%m/%d %H:%M:%S",
+        "%Y-%m-%d %H:%M",
+        "%Y/%m/%d %H:%M",
+        "%Y-%m-%d",
+        "%Y/%m/%d",
+        "%Y%m%d%H%M%S",
+    ],
+    "field_map": {
+        "device_id": os.environ.get("OPEN_WATER_DATA_FIELD_DEVICE_ID", "站点编号|断面编号|MN"),
+        "device_name": os.environ.get("OPEN_WATER_DATA_FIELD_DEVICE_NAME", "断面名称|站点名称|监测断面"),
+        "location": os.environ.get("OPEN_WATER_DATA_FIELD_LOCATION", "所在地|区域|省份|城市|河流"),
+        "timestamp": os.environ.get("OPEN_WATER_DATA_FIELD_TIMESTAMP", "监测时间|采样时间|时间"),
+        "temperature": os.environ.get("OPEN_WATER_DATA_FIELD_TEMPERATURE", "水温|温度"),
+        "ph": os.environ.get("OPEN_WATER_DATA_FIELD_PH", "pH|PH"),
+        "dissolved_oxygen": os.environ.get("OPEN_WATER_DATA_FIELD_DO", "溶解氧|DO"),
+        # 修复：电导率和盐度是不同的物理量，不能混用
+        "salinity": os.environ.get("OPEN_WATER_DATA_FIELD_SALINITY", "盐度"),
+        "conductivity": os.environ.get("OPEN_WATER_DATA_FIELD_CONDUCTIVITY", "电导率|电导"),
+    },
+    "headers": _open_headers,
+}
+
+# National water data configuration (国家水质自动综合监管平台)
+NATIONAL_WATER_DATA_ENABLED = os.environ.get("NATIONAL_WATER_DATA_ENABLED", "true").lower() == "true"
+NATIONAL_WATER_DATA_CACHE_MINUTES = int(os.environ.get("NATIONAL_WATER_DATA_CACHE_MINUTES", "20"))

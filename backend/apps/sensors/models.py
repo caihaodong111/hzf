@@ -1,11 +1,12 @@
 """
-传感器数据模型
+传感器数据模型 - 统一数据模型
+支持国家水质自动综合监管平台、开放数据和模拟数据
 """
 from django.db import models
 
 
 class Device(models.Model):
-    """设备模型"""
+    """设备模型 - 统一多数据源的设备信息"""
     DEVICE_TYPE_CHOICES = [
         ('sensor', '传感器'),
         ('controller', '控制器'),
@@ -17,11 +18,23 @@ class Device(models.Model):
         ('error', '故障'),
     ]
 
+    # 基础字段
     device_id = models.CharField(max_length=50, unique=True, verbose_name='设备ID')
-    device_name = models.CharField(max_length=100, verbose_name='设备名称')
-    device_type = models.CharField(max_length=20, choices=DEVICE_TYPE_CHOICES, verbose_name='设备类型')
+    device_name = models.CharField(max_length=100, verbose_name='设备名称/断面名称')
+    device_type = models.CharField(max_length=20, choices=DEVICE_TYPE_CHOICES, default='sensor', verbose_name='设备类型')
+
+    # 位置信息
     location = models.CharField(max_length=200, blank=True, null=True, verbose_name='设备位置')
+    province = models.CharField(max_length=50, blank=True, null=True, verbose_name='省份')
+    province_code = models.CharField(max_length=20, blank=True, null=True, verbose_name='省份代码')
+    river_basin = models.CharField(max_length=50, blank=True, null=True, verbose_name='流域')
+    river_basin_code = models.CharField(max_length=20, blank=True, null=True, verbose_name='流域代码')
+
+    # 状态
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='online', verbose_name='设备状态')
+    last_data_time = models.DateTimeField(null=True, blank=True, verbose_name='最后数据时间')
+
+    # 时间戳
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
     updated_at = models.DateTimeField(auto_now=True, verbose_name='更新时间')
 
@@ -30,29 +43,244 @@ class Device(models.Model):
         verbose_name = '设备'
         verbose_name_plural = '设备'
         ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['province_code']),
+            models.Index(fields=['river_basin_code']),
+            models.Index(fields=['status']),
+            models.Index(fields=['device_type']),
+        ]
 
     def __str__(self):
         return f"{self.device_name} ({self.device_id})"
 
+    @property
+    def is_online(self):
+        """判断设备是否在线（1小时内有数据）"""
+        if not self.last_data_time:
+            return False
+        from django.utils import timezone
+        return (timezone.now() - self.last_data_time).total_seconds() < 3600
+
 
 class SensorData(models.Model):
-    """传感器数据模型"""
+    """传感器数据模型 - 统一多数据源的水质监测数据"""
     device = models.ForeignKey(Device, on_delete=models.CASCADE, to_field='device_id',
-                              db_column='device_id', verbose_name='设备')
-    temperature = models.DecimalField(max_digits=4, decimal_places=1, null=True, blank=True,
+                              db_column='device_id', verbose_name='设备',
+                              related_name='sensor_data')
+
+    # 基础水质参数
+    temperature = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True,
                                       verbose_name='水温(℃)')
-    salinity = models.DecimalField(max_digits=4, decimal_places=1, null=True, blank=True,
-                                   verbose_name='盐度(‰)')
-    dissolved_oxygen = models.DecimalField(max_digits=4, decimal_places=1, null=True, blank=True,
+    ph = models.DecimalField(max_digits=4, decimal_places=2, null=True, blank=True, verbose_name='pH值')
+
+    # 溶解氧
+    dissolved_oxygen = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True,
                                           verbose_name='溶解氧(mg/L)')
-    ph = models.DecimalField(max_digits=3, decimal_places=1, null=True, blank=True, verbose_name='pH值')
-    recorded_at = models.DateTimeField(auto_now_add=True, db_index=True, verbose_name='记录时间')
+
+    # 电导率 (μS/cm) - 国家水质数据使用
+    conductivity = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True,
+                                      verbose_name='电导率(μS/cm)')
+
+    # 浊度 (NTU) - 国家水质数据使用
+    turbidity = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True,
+                                   verbose_name='浊度(NTU)')
+
+    # 盐度 (‰) - 开放数据/模拟数据使用
+    # 注意：电导率和盐度是不同的物理量，不能混用
+    salinity = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True,
+                                  verbose_name='盐度(‰)')
+
+    # 综合水质评价
+    water_quality = models.CharField(max_length=10, blank=True, null=True,
+                                    verbose_name='水质类别',
+                                    help_text='Ⅰ类、Ⅱ类、Ⅲ类、Ⅳ类、Ⅴ类、劣Ⅴ类')
+
+    # 扩展水质参数 (国家水质数据)
+    permanganate = models.DecimalField(max_digits=6, decimal_places=3, null=True, blank=True,
+                                      verbose_name='高锰酸盐指数(mg/L)')
+    ammonia_nitrogen = models.DecimalField(max_digits=6, decimal_places=3, null=True, blank=True,
+                                         verbose_name='氨氮(mg/L)')
+    total_phosphorus = models.DecimalField(max_digits=6, decimal_places=3, null=True, blank=True,
+                                         verbose_name='总磷(mg/L)')
+    total_nitrogen = models.DecimalField(max_digits=6, decimal_places=3, null=True, blank=True,
+                                       verbose_name='总氮(mg/L)')
+
+    # 数据来源标识
+    data_source = models.CharField(max_length=50, blank=True, null=True,
+                                  verbose_name='数据来源',
+                                  help_text='national/open/simulator/database')
+
+    # 时间戳
+    recorded_at = models.DateTimeField(db_index=True, verbose_name='监测时间')
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='入库时间')
 
     class Meta:
         db_table = 'sensor_data'
         verbose_name = '传感器数据'
         verbose_name_plural = '传感器数据'
         ordering = ['-recorded_at']
+        indexes = [
+            models.Index(fields=['device', '-recorded_at']),
+            models.Index(fields=['recorded_at']),
+            models.Index(fields=['data_source']),
+            models.Index(fields=['water_quality']),
+        ]
 
     def __str__(self):
         return f"{self.device_id} - {self.recorded_at}"
+
+    def get_water_quality_level(self):
+        """获取水质等级数值"""
+        quality_map = {
+            'Ⅰ': 1, 'Ⅱ': 2, 'Ⅲ': 3, 'Ⅳ': 4, 'Ⅴ': 5, '劣Ⅴ': 6
+        }
+        return quality_map.get(self.water_quality, 0)
+
+    def is_excellent(self):
+        """是否优良水质(Ⅰ-Ⅱ类)"""
+        return self.water_quality in ['Ⅰ', 'Ⅱ']
+
+    def is_polluted(self):
+        """是否污染水质(Ⅳ-劣Ⅴ类)"""
+        return self.water_quality in ['Ⅳ', 'Ⅴ', '劣Ⅴ']
+
+
+class SensorDataSnapshot(models.Model):
+    """传感器数据快照 - 用于存储历史趋势数据
+
+    定期（如每小时）从数据源获取所有站点的最新数据并保存为快照，
+    这样就能查询任意时间段的历史趋势了。
+    """
+    snapshot_id = models.BigAutoField(primary_key=True)
+
+    # 设备基本信息
+    device_id = models.CharField(max_length=50, db_index=True, verbose_name='设备ID')
+    device_name = models.CharField(max_length=100, blank=True, null=True, verbose_name='设备名称')
+    location = models.CharField(max_length=200, blank=True, null=True, verbose_name='位置')
+    province = models.CharField(max_length=50, blank=True, null=True, verbose_name='省份')
+    river_basin = models.CharField(max_length=50, blank=True, null=True, verbose_name='流域')
+
+    # 水质参数
+    temperature = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True,
+                                     verbose_name='水温(°C)')
+    ph = models.DecimalField(max_digits=4, decimal_places=2, null=True, blank=True,
+                           verbose_name='pH值')
+    dissolved_oxygen = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True,
+                                         verbose_name='溶解氧(mg/L)')
+    conductivity = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True,
+                                      verbose_name='电导率(μS/cm)')
+    turbidity = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True,
+                                   verbose_name='浊度(NTU)')
+    salinity = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True,
+                                  verbose_name='盐度(‰)')
+
+    # 综合水质评价
+    water_quality = models.CharField(max_length=10, blank=True, null=True,
+                                    verbose_name='水质类别')
+
+    # 扩展水质参数
+    permanganate = models.DecimalField(max_digits=6, decimal_places=3, null=True, blank=True,
+                                      verbose_name='高锰酸盐指数(mg/L)')
+    ammonia_nitrogen = models.DecimalField(max_digits=6, decimal_places=3, null=True, blank=True,
+                                         verbose_name='氨氮(mg/L)')
+    total_phosphorus = models.DecimalField(max_digits=6, decimal_places=3, null=True, blank=True,
+                                          verbose_name='总磷(mg/L)')
+    total_nitrogen = models.DecimalField(max_digits=6, decimal_places=3, null=True, blank=True,
+                                        verbose_name='总氮(mg/L)')
+
+    # 数据来源和快照时间
+    data_source = models.CharField(max_length=50, blank=True, null=True,
+                                  verbose_name='数据来源')
+    snapshot_time = models.DateTimeField(db_index=True, verbose_name='快照时间')
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
+
+    class Meta:
+        db_table = 'sensor_data_snapshot'
+        verbose_name = '传感器数据快照'
+        verbose_name_plural = '传感器数据快照'
+        ordering = ['-snapshot_time']
+        indexes = [
+            models.Index(fields=['device_id', '-snapshot_time']),
+            models.Index(fields=['snapshot_time']),
+            models.Index(fields=['data_source']),
+            models.Index(fields=['device_id', 'snapshot_time']),
+        ]
+        # 为每个设备的快照时间添加唯一约束，避免同一时刻重复快照
+        constraints = [
+            models.UniqueConstraint(
+                fields=['device_id', 'snapshot_time'],
+                name='unique_device_snapshot_time'
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.device_id} - {self.snapshot_time.strftime('%Y-%m-%d %H:%M')}"
+
+
+class Alert(models.Model):
+    """告警模型 - 统一告警数据结构"""
+    ALERT_LEVEL_CHOICES = [
+        ('info', '信息'),
+        ('warning', '警告'),
+        ('critical', '严重'),
+    ]
+
+    ALERT_TYPE_CHOICES = [
+        ('temperature', '水温异常'),
+        ('dissolved_oxygen', '溶解氧异常'),
+        ('ph', 'pH异常'),
+        ('water_quality', '水质异常'),
+        ('conductivity', '电导率异常'),
+        ('turbidity', '浊度异常'),
+        ('device_offline', '设备离线'),
+        ('other', '其他'),
+    ]
+
+    # 关联设备
+    device = models.ForeignKey(Device, on_delete=models.CASCADE, to_field='device_id',
+                             db_column='device_id', verbose_name='设备',
+                             related_name='alerts', null=True, blank=True)
+
+    # 告警内容 (统一字段命名)
+    alert_type = models.CharField(max_length=50, choices=ALERT_TYPE_CHOICES, verbose_name='告警类型')
+    alert_level = models.CharField(max_length=20, choices=ALERT_LEVEL_CHOICES, verbose_name='告警级别')
+    message = models.TextField(verbose_name='告警消息')
+
+    # 告警值
+    value = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True,
+                               verbose_name='告警值')
+    value_unit = models.CharField(max_length=20, blank=True, null=True, verbose_name='值单位')
+
+    # 状态
+    resolved = models.BooleanField(default=False, verbose_name='已解决')
+    resolved_at = models.DateTimeField(null=True, blank=True, verbose_name='解决时间')
+
+    # 时间戳 (统一字段命名)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True, verbose_name='告警时间')
+    updated_at = models.DateTimeField(auto_now=True, verbose_name='更新时间')
+
+    # 数据来源
+    data_source = models.CharField(max_length=50, blank=True, null=True, verbose_name='数据来源')
+
+    class Meta:
+        db_table = 'alerts'
+        verbose_name = '告警'
+        verbose_name_plural = '告警'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['device', '-created_at']),
+            models.Index(fields=['alert_type']),
+            models.Index(fields=['alert_level']),
+            models.Index(fields=['resolved']),
+            models.Index(fields=['created_at']),
+        ]
+
+    def __str__(self):
+        return f"[{self.alert_level}] {self.device_id} - {self.message}"
+
+    def resolve(self):
+        """标记告警为已解决"""
+        from django.utils import timezone
+        self.resolved = True
+        self.resolved_at = timezone.now()
+        self.save()

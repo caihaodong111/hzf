@@ -1,0 +1,5 @@
+# GUI版本（推荐）
+# 无需额外依赖，使用Python内置tkinter
+
+# 命令行版本
+requests>=2.32.0

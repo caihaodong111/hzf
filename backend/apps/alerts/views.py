@@ -1,39 +1,43 @@
 """
-告警视图
+告警视图 - 重定向到sensors app的AlertViewSet
+保留此文件以兼容现有路由，实际功能由sensors.views.AlertViewSet提供
 """
-from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
-from .models import Alert
-from .serializers import AlertSerializer
+from apps.sensors.models import Alert as AlertModel
+from apps.sensors.serializers import AlertSerializer
 from core.data_generator import SensorDataGenerator
+from core.open_data_provider import OpenWaterDataService
+from core.national_water_data import NationalWaterDataService
+from core.data_transformer import DataTransformer
 
 
-class AlertViewSet(viewsets.ReadOnlyModelViewSet):
-    """告警视图集"""
-    queryset = Alert.objects.all()
-    serializer_class = AlertSerializer
+class AlertViewSet:
+    """告警视图集 - 兼容层，重定向到sensors.app"""
 
-    def get_queryset(self):
-        queryset = super().get_queryset()
-        resolved = self.request.query_params.get('resolved')
-
-        if resolved == 'false':
-            queryset = queryset.filter(resolved=False)
-        elif resolved == 'true':
-            queryset = queryset.filter(resolved=True)
-
-        return queryset
-
-    @action(detail=False, methods=['get'])
-    def list_fake(self, request):
-        """获取假告警数据（用于展示）"""
-        count = int(request.query_params.get('count', 5))
+    @staticmethod
+    def list_fake(request):
+        """获取告警数据 - 兼容旧API格式"""
+        count = int(request.query_params.get('count', 10))
         alerts = []
 
-        for _ in range(count):
-            alerts.append(SensorDataGenerator.generate_alert())
+        # 优先使用国家水质数据
+        if NationalWaterDataService.enabled():
+            raw_alerts = NationalWaterDataService.get_alerts(count=count)
+            if raw_alerts:
+                alerts = [DataTransformer.transform_alert(a, 'national') for a in raw_alerts]
+
+        # 其次使用外部数据源
+        if not alerts and OpenWaterDataService.enabled():
+            raw_alerts = OpenWaterDataService.get_alerts(count=count)
+            if raw_alerts:
+                alerts = [DataTransformer.transform_alert(a, 'open') for a in raw_alerts]
+
+        # 最后使用模拟数据
+        if not alerts:
+            raw_alerts = SensorDataGenerator.generate_alerts(count=count)
+            alerts = [DataTransformer.transform_alert(a, 'simulator') for a in raw_alerts]
 
         return Response({
             'code': 200,

@@ -32,6 +32,11 @@
   box-sizing: border-box;
 }
 
+html, body {
+  height: 100%;
+  overflow: hidden; // 参考国家平台设计，禁用页面滚动
+}
+
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
     'Helvetica Neue', Arial, sans-serif;
@@ -42,7 +47,7 @@ body {
   background-size: 50px 50px;
   background-position: -1px -1px;
   color: var(--text-primary);
-  overflow-x: hidden;
+  overflow: hidden; // 禁用页面滚动，使用内部滚动
 }
 
 // 动态网格背景

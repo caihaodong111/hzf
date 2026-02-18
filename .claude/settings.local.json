@@ -12,7 +12,13 @@
       "Bash(powershell:*)",
       "Bash(git commit:*)",
       "Bash(git push:*)",
-      "Bash(git remote set-url:*)"
+      "Bash(git remote set-url:*)",
+      "mcp__web-reader__webReader",
+      "mcp__web-search-prime__webSearchPrime",
+      "Bash(curl:*)",
+      "Bash(npm run build)",
+      "Bash(python3:*)",
+      "Bash(pkill:*)"
     ]
   }
 }

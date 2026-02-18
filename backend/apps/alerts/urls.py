@@ -1,14 +1,10 @@
 """
-告警应用URL配置
+告警应用URL配置 - 重定向到sensors app的alerts路由
+保留此文件以兼容现有API路径
 """
 from django.urls import path, include
-from rest_framework.routers import DefaultRouter
 
-from .views import AlertViewSet
-
-router = DefaultRouter()
-router.register('', AlertViewSet, basename='alert')
-
+# 直接重定向到sensors app的alerts路由
 urlpatterns = [
-    path('', include(router.urls)),
+    path('', include('apps.sensors.urls')),
 ]
