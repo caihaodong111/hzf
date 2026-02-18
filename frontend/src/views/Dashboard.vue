@@ -86,11 +86,11 @@
                 type="text"
                 placeholder="断面名称搜索..."
                 v-model="filters.search"
-                @keyup.enter="loadRealtimeData"
+                @keyup.enter="loadRealtimeData(false, true)"
               />
             </div>
 
-            <button class="search-btn" type="button" @click="loadRealtimeData">
+            <button class="search-btn" type="button" @click="loadRealtimeData(false, true)">
               <el-icon class="search-icon"><Search /></el-icon>
               搜索
             </button>
@@ -165,7 +165,8 @@
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { getRealtimeData } from '@/api/sensors'
+import { getRealtimeData as apiGetRealtimeData } from '@/api/sensors'
+import sensorStore from '@/stores/sensorStore'
 import { DataLine, Warning, Refresh, CircleCheck, ArrowDown, Search } from '@element-plus/icons-vue'
 
 const loading = ref(false)
@@ -201,6 +202,7 @@ const scrollSensors = computed(() => {
   return [...filteredSensors.value, ...filteredSensors.value]
 })
 
+// 基于API测试数据生成的城市列表（仅包含有数据支持的城市）
 const provinceCascadeOptions = [
   { code: '', name: '全国', children: [] },
   { code: '110000', name: '北京市', children: ["东城区", "丰台区", "朝阳区", "海淀区", "石景山区", "西城区"] },
@@ -266,27 +268,27 @@ const toggleProvinceDropdown = () => {
 
 // 选择省份
 const selectProvince = (item, index = 0) => {
-  if (item.children && item.children.length) {
-    selectedProvince.value = { code: item.code, name: item.name }
-    activeProvinceIndex.value = index
-    return
-  }
   selectedProvince.value = { code: item.code, name: item.name }
   selectedProvinceChild.value = ''
   filters.value.province = item.code
+  if (item.children && item.children.length) {
+    activeProvinceIndex.value = index
+    loadRealtimeData(false, true) // 省级筛选
+    return
+  }
   provinceDropdownOpen.value = false
-  loadRealtimeData()
+  loadRealtimeData(false, true) // 强制刷新
 }
 
 const selectProvinceChild = (child) => {
   const active = provinceCascadeOptions[activeProvinceIndex.value]
-  if (active && active.code !== selectedProvince.value.code) {
+  if (active) {
     selectedProvince.value = { code: active.code, name: active.name }
     filters.value.province = active.code
   }
   selectedProvinceChild.value = child
   provinceDropdownOpen.value = false
-  loadRealtimeData()
+  loadRealtimeData(false, true) // 强制刷新
 }
 
 // 点击外部关闭下拉
@@ -392,7 +394,13 @@ const stats = computed(() => [
   }
 ])
 
-const loadRealtimeData = async (isAuto = false) => {
+const loadRealtimeData = async (isAuto = false, forceRefresh = false) => {
+  // 只有在不强制刷新且没有筛选条件时才使用缓存
+  if (!forceRefresh && sensorStore.isCacheValid() && sensorStore.cache.sensors.value.length > 0) {
+    sensors.value = sensorStore.cache.sensors.value
+    total.value = sensorStore.cache.total.value
+  }
+
   if (!isAuto) {
     loading.value = true
     isManualRefresh.value = true
@@ -401,13 +409,18 @@ const loadRealtimeData = async (isAuto = false) => {
 
   try {
     const searchName = filters.value.search
-    const res = await getRealtimeData(
-      100,
-      filters.value.province,
-      filters.value.river,
-      searchName,
-      selectedProvinceChild.value  // 传递城市参数
+    // 使用缓存store获取数据，筛选时强制刷新
+    const res = await sensorStore.getRealtimeData(
+      () => apiGetRealtimeData(
+        100,
+        filters.value.province,
+        filters.value.river,
+        searchName,
+        selectedProvinceChild.value
+      ),
+      forceRefresh || !isAuto // 筛选或手动刷新时强制更新
     )
+
     if (res.code === 200) {
       const newSensors = res.data.sensors || []
       total.value = res.data.total || newSensors.length
@@ -624,7 +637,11 @@ onUnmounted(() => {
 </script>
 
 <style scoped lang="scss">
-$bg-gradient: linear-gradient(135deg, #e0e7ff 0%, #f5f7fb 100%);
+:root {
+  --primary: #0984e3;
+  --glass: rgba(255, 255, 255, 0.8);
+}
+
 $glass-bg: rgba(255, 255, 255, 0.5);
 $glass-border: rgba(255, 255, 255, 0.55);
 $text-main: #1f2937;
@@ -632,7 +649,10 @@ $text-sub: #64748b;
 
 .dashboard-page {
   min-height: 100%;
-  background: $bg-gradient;
+  background-color: #f0f2f5;
+  background-image:
+    radial-gradient(at 0% 0%, rgba(9, 132, 227, 0.05) 0px, transparent 50%),
+    radial-gradient(at 100% 100%, rgba(108, 92, 231, 0.05) 0px, transparent 50%);
   color: $text-main;
   font-family: "Sora", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
   position: relative;
@@ -640,13 +660,7 @@ $text-sub: #64748b;
 }
 
 .fluid-bg {
-  position: absolute;
-  width: 100%;
-  height: 100%;
-  background:
-    radial-gradient(circle at 0% 0%, rgba(79, 172, 254, 0.15) 0%, transparent 40%),
-    radial-gradient(circle at 100% 100%, rgba(99, 102, 241, 0.12) 0%, transparent 40%);
-  z-index: 0;
+  display: none;
 }
 
 .dashboard-content {

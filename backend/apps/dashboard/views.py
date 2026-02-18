@@ -1,12 +1,17 @@
 """
 数据看板视图 - 使用真实统计数据
 """
+import json
+import os
+import urllib.request
+import urllib.error
+
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from django.utils import timezone
 from datetime import timedelta
 
-from apps.sensors.models import Device, SensorData, Alert
+from apps.sensors.models import SensorData, SensorDataSnapshot, Alert
 from core.data_generator import SensorDataGenerator
 from core.open_data_provider import OpenWaterDataService
 from core.national_water_data import NationalWaterDataService
@@ -51,16 +56,15 @@ def overview(request):
     avg_temp = sum(temp_values) / len(temp_values) if temp_values else 0
     avg_do = sum(do_values) / len(do_values) if do_values else 0
 
-    # 从数据库获取真实的设备统计
-    total_devices = Device.objects.count()
-    online_devices = Device.objects.filter(status='online').count()
-    offline_devices = total_devices - online_devices
+    # 设备统计 - 优先使用实时数据
+    total_devices = len(sensors)
+    online_devices = sum(1 for s in sensors if _is_device_online(s))
+    offline_devices = max(total_devices - online_devices, 0)
 
-    # 如果数据库为空，使用实时数据统计
     if total_devices == 0:
-        total_devices = len(sensors)
-        online_devices = sum(1 for s in sensors if _is_device_online(s))
-        offline_devices = total_devices - online_devices
+        total_devices, online_devices, offline_devices = _get_device_counts_from_snapshots(hours)
+    if total_devices == 0:
+        total_devices, online_devices, offline_devices = _get_device_counts_from_history(hours)
 
     # 获取告警统计
     time_threshold = timezone.now() - timedelta(hours=hours)
@@ -142,10 +146,10 @@ def statistics(request):
     time_threshold = timezone.now() - timedelta(hours=hours)
 
     # 设备统计
-    total_devices = Device.objects.count()
-    online_devices = Device.objects.filter(status='online').count()
-    offline_devices = Device.objects.filter(status='offline').count()
-    error_devices = Device.objects.filter(status='error').count()
+    total_devices, online_devices, offline_devices = _get_device_counts_from_snapshots(hours)
+    if total_devices == 0:
+        total_devices, online_devices, offline_devices = _get_device_counts_from_history(hours)
+    error_devices = 0
 
     # 告警统计
     total_alerts = Alert.objects.filter(created_at__gte=time_threshold).count()
@@ -177,9 +181,8 @@ def statistics(request):
     )
 
     quality_distribution = {}
-    for quality, _ in SensorData.WATER_QUALITY_CHOICES:
-        if hasattr(SensorData, 'WATER_QUALITY_CHOICES'):
-            continue
+    quality_levels = ['Ⅰ', 'Ⅱ', 'Ⅲ', 'Ⅳ', 'Ⅴ', '劣Ⅴ']
+    for quality in quality_levels:
         count = sensor_data_qs.filter(water_quality=quality).count()
         if count > 0:
             quality_distribution[quality] = count
@@ -221,3 +224,116 @@ def statistics(request):
             'water_quality_distribution': quality_distribution
         }
     })
+
+
+@api_view(['POST'])
+def ai_insight(request):
+    """AI 智能洞察 - 基于当前水质数据生成建议"""
+    payload = request.data or {}
+    question = (payload.get('question') or '').strip()
+    if not question:
+        return Response({'code': 400, 'message': '请提供问题或需求描述'}, status=400)
+
+    api_key = os.environ.get('BIGMODEL_API_KEY') or os.environ.get('ZHIPU_API_KEY')
+    if not api_key:
+        return Response(
+            {'code': 400, 'message': '未配置 BIGMODEL_API_KEY/ZHIPU_API_KEY'},
+            status=400
+        )
+
+    context = payload.get('context') or {}
+    model = payload.get('model') or 'glm-4.7-flash'
+    try:
+        answer = _call_bigmodel(api_key, model, question, context)
+    except RuntimeError as exc:
+        return Response({'code': 502, 'message': str(exc)}, status=502)
+
+    return Response({
+        'code': 200,
+        'message': 'success',
+        'data': {
+            'answer': answer,
+            'model': model
+        }
+    })
+
+
+def _call_bigmodel(api_key, model, question, context):
+    system_prompt = (
+        "你是智慧渔业水质监控系统的AI助手，负责基于监测数据提供"
+        "风险识别、异常解释、运维建议与可执行行动。"
+        "回答需简洁、可落地，分点给出结论与建议。"
+    )
+    payload = {
+        'context': {
+            'summary': context.get('summary'),
+            'sensors': context.get('sensors'),
+            'data_source': context.get('data_source'),
+            'timestamp': context.get('timestamp'),
+        },
+        'question': question
+    }
+    messages = [
+        {'role': 'system', 'content': system_prompt},
+        {
+            'role': 'user',
+            'content': f"问题: {question}\n\n上下文数据(JSON):\n{json.dumps(payload['context'], ensure_ascii=False)}"
+        }
+    ]
+
+    request_body = json.dumps({
+        'model': model,
+        'messages': messages,
+        'max_tokens': 2048,
+        'temperature': 0.3
+    }).encode('utf-8')
+
+    req = urllib.request.Request(
+        'https://open.bigmodel.cn/api/paas/v4/chat/completions',
+        data=request_body,
+        headers={
+            'Content-Type': 'application/json',
+            'Authorization': f'Bearer {api_key}',
+        },
+        method='POST'
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=30) as response:
+            raw = response.read()
+            data = json.loads(raw.decode('utf-8'))
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode('utf-8') if exc.fp else str(exc)
+        raise RuntimeError(f'AI服务响应异常: {detail}') from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f'AI服务连接失败: {exc.reason}') from exc
+
+    choices = data.get('choices') or []
+    if not choices:
+        raise RuntimeError('AI服务未返回有效结果')
+    message = choices[0].get('message') or {}
+    return message.get('content', '').strip()
+
+
+def _get_device_counts_from_snapshots(hours):
+    snapshot_threshold = timezone.now() - timedelta(hours=hours)
+    snapshots = SensorDataSnapshot.objects.filter(snapshot_time__gte=snapshot_threshold)
+    if not snapshots.exists():
+        return 0, 0, 0
+    total = snapshots.values('device_id').distinct().count()
+    online_threshold = timezone.now() - timedelta(hours=1)
+    online = snapshots.filter(snapshot_time__gte=online_threshold).values('device_id').distinct().count()
+    offline = max(total - online, 0)
+    return total, online, offline
+
+
+def _get_device_counts_from_history(hours):
+    time_threshold = timezone.now() - timedelta(hours=hours)
+    data_qs = SensorData.objects.filter(recorded_at__gte=time_threshold)
+    if not data_qs.exists():
+        return 0, 0, 0
+    total = data_qs.values('device_id').distinct().count()
+    online_threshold = timezone.now() - timedelta(hours=1)
+    online = data_qs.filter(recorded_at__gte=online_threshold).values('device_id').distinct().count()
+    offline = max(total - online, 0)
+    return total, online, offline

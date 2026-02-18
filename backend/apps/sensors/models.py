@@ -5,68 +5,10 @@
 from django.db import models
 
 
-class Device(models.Model):
-    """设备模型 - 统一多数据源的设备信息"""
-    DEVICE_TYPE_CHOICES = [
-        ('sensor', '传感器'),
-        ('controller', '控制器'),
-    ]
-
-    STATUS_CHOICES = [
-        ('online', '在线'),
-        ('offline', '离线'),
-        ('error', '故障'),
-    ]
-
-    # 基础字段
-    device_id = models.CharField(max_length=50, unique=True, verbose_name='设备ID')
-    device_name = models.CharField(max_length=100, verbose_name='设备名称/断面名称')
-    device_type = models.CharField(max_length=20, choices=DEVICE_TYPE_CHOICES, default='sensor', verbose_name='设备类型')
-
-    # 位置信息
-    location = models.CharField(max_length=200, blank=True, null=True, verbose_name='设备位置')
-    province = models.CharField(max_length=50, blank=True, null=True, verbose_name='省份')
-    province_code = models.CharField(max_length=20, blank=True, null=True, verbose_name='省份代码')
-    river_basin = models.CharField(max_length=50, blank=True, null=True, verbose_name='流域')
-    river_basin_code = models.CharField(max_length=20, blank=True, null=True, verbose_name='流域代码')
-
-    # 状态
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='online', verbose_name='设备状态')
-    last_data_time = models.DateTimeField(null=True, blank=True, verbose_name='最后数据时间')
-
-    # 时间戳
-    created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
-    updated_at = models.DateTimeField(auto_now=True, verbose_name='更新时间')
-
-    class Meta:
-        db_table = 'devices'
-        verbose_name = '设备'
-        verbose_name_plural = '设备'
-        ordering = ['-created_at']
-        indexes = [
-            models.Index(fields=['province_code']),
-            models.Index(fields=['river_basin_code']),
-            models.Index(fields=['status']),
-            models.Index(fields=['device_type']),
-        ]
-
-    def __str__(self):
-        return f"{self.device_name} ({self.device_id})"
-
-    @property
-    def is_online(self):
-        """判断设备是否在线（1小时内有数据）"""
-        if not self.last_data_time:
-            return False
-        from django.utils import timezone
-        return (timezone.now() - self.last_data_time).total_seconds() < 3600
-
-
 class SensorData(models.Model):
     """传感器数据模型 - 统一多数据源的水质监测数据"""
-    device = models.ForeignKey(Device, on_delete=models.CASCADE, to_field='device_id',
-                              db_column='device_id', verbose_name='设备',
-                              related_name='sensor_data')
+    device_id = models.CharField(max_length=50, db_index=True, verbose_name='设备ID', blank=True, null=True)
+    device_name = models.CharField(max_length=100, blank=True, null=True, verbose_name='设备名称/断面名称')
 
     # 基础水质参数
     temperature = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True,
@@ -124,7 +66,7 @@ class SensorData(models.Model):
         verbose_name_plural = '传感器数据'
         ordering = ['-recorded_at']
         indexes = [
-            models.Index(fields=['device', '-recorded_at']),
+            models.Index(fields=['device_id', '-recorded_at'], name='sensor_data_device_time_idx'),
             models.Index(fields=['recorded_at']),
             models.Index(fields=['data_source']),
             models.Index(fields=['water_quality']),
@@ -162,6 +104,7 @@ class SensorDataSnapshot(models.Model):
     device_name = models.CharField(max_length=100, blank=True, null=True, verbose_name='设备名称')
     location = models.CharField(max_length=200, blank=True, null=True, verbose_name='位置')
     province = models.CharField(max_length=50, blank=True, null=True, verbose_name='省份')
+    city = models.CharField(max_length=50, blank=True, null=True, verbose_name='城市')
     river_basin = models.CharField(max_length=50, blank=True, null=True, verbose_name='流域')
 
     # 水质参数
@@ -244,10 +187,9 @@ class Alert(models.Model):
         ('other', '其他'),
     ]
 
-    # 关联设备
-    device = models.ForeignKey(Device, on_delete=models.CASCADE, to_field='device_id',
-                             db_column='device_id', verbose_name='设备',
-                             related_name='alerts', null=True, blank=True)
+    # 设备标识
+    device_id = models.CharField(max_length=50, db_index=True, verbose_name='设备ID')
+    device_name = models.CharField(max_length=100, blank=True, null=True, verbose_name='设备名称/断面名称')
 
     # 告警内容 (统一字段命名)
     alert_type = models.CharField(max_length=50, choices=ALERT_TYPE_CHOICES, verbose_name='告警类型')
@@ -276,7 +218,7 @@ class Alert(models.Model):
         verbose_name_plural = '告警'
         ordering = ['-created_at']
         indexes = [
-            models.Index(fields=['device', '-created_at']),
+            models.Index(fields=['device_id', '-created_at'], name='alerts_device_time_idx'),
             models.Index(fields=['alert_type']),
             models.Index(fields=['alert_level']),
             models.Index(fields=['resolved']),

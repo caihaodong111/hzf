@@ -1,54 +1,31 @@
 import { createRouter, createWebHistory } from 'vue-router'
 
+// 使用静态导入，避免懒加载延迟
+import Dashboard from '@/views/Dashboard.vue'
+import Analysis from '@/views/Analysis.vue'
+import AiAssistant from '@/views/AiAssistant.vue'
+
 const routes = [
-  {
-    path: '/login',
-    name: 'Login',
-    component: () => import('@/views/Login.vue'),
-    meta: { requiresAuth: false }
-  },
   {
     path: '/',
     name: 'Dashboard',
-    component: () => import('@/views/Dashboard.vue'),
-    meta: { requiresAuth: true }
+    component: Dashboard
   },
   {
     path: '/analysis',
     name: 'Analysis',
-    component: () => import('@/views/Analysis.vue'),
-    meta: { requiresAuth: true }
+    component: Analysis
   },
   {
-    path: '/devices',
-    name: 'Devices',
-    component: () => import('@/views/Devices.vue'),
-    meta: { requiresAuth: true }
-  },
-  {
-    path: '/alerts',
-    name: 'Alerts',
-    component: () => import('@/views/Alerts.vue'),
-    meta: { requiresAuth: true }
+    path: '/ai',
+    name: 'AiAssistant',
+    component: AiAssistant
   }
 ]
 
 const router = createRouter({
   history: createWebHistory(),
   routes
-})
-
-// 简单的登录验证
-router.beforeEach((to, from, next) => {
-  const token = localStorage.getItem('token')
-
-  if (to.meta.requiresAuth && !token) {
-    next('/login')
-  } else if (to.path === '/login' && token) {
-    next('/')
-  } else {
-    next()
-  }
 })
 
 export default router

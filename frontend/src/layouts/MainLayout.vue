@@ -46,7 +46,7 @@
 
 <script setup>
 import { useRoute } from 'vue-router'
-import { Monitor, TrendCharts, Setting, Bell } from '@element-plus/icons-vue'
+import { Monitor, TrendCharts, ChatLineRound } from '@element-plus/icons-vue'
 
 const route = useRoute()
 
@@ -65,16 +65,10 @@ const menuItems = [
     icon: TrendCharts
   },
   {
-    path: '/devices',
-    title: '设备管理',
-    subtitle: 'Devices',
-    icon: Setting
-  },
-  {
-    path: '/alerts',
-    title: '预警中心',
-    subtitle: 'Alerts',
-    icon: Bell
+    path: '/ai',
+    title: 'AI助理',
+    subtitle: 'AI',
+    icon: ChatLineRound
   }
 ]
 

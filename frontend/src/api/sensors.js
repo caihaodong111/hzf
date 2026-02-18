@@ -45,16 +45,6 @@ export function getHistoricalData(deviceId, hours = 24) {
 }
 
 /**
- * 获取设备列表
- */
-export function getDeviceList() {
-  return request({
-    url: '/devices/',
-    method: 'get'
-  })
-}
-
-/**
  * 获取仪表板概览数据
  */
 export function getDashboardOverview(hours = 24, count = 10) {

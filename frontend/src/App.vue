@@ -1,17 +1,11 @@
 <template>
-  <template v-if="route.path === '/login'">
-    <router-view />
-  </template>
-  <MainLayout v-else>
+  <MainLayout>
     <router-view />
   </MainLayout>
 </template>
 
 <script setup>
-import { useRoute } from 'vue-router'
 import MainLayout from '@/layouts/MainLayout.vue'
-
-const route = useRoute()
 </script>
 
 <style>

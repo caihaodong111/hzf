@@ -10,83 +10,21 @@ from datetime import timedelta
 from django.db.models import Avg, Count, Q, F
 from django.db.models.functions import Coalesce
 
-from .models import Device, SensorData, Alert
+from .models import SensorData, Alert
 from .serializers import (
-    DeviceSerializer, SensorDataSerializer, RealtimeDataSerializer,
+    SensorDataSerializer, RealtimeDataSerializer,
     HistoricalDataSerializer, AlertSerializer, DashboardSummarySerializer
 )
 from core.data_generator import SensorDataGenerator
 from core.open_data_provider import OpenWaterDataService
 from core.national_water_data import NationalWaterDataService
-from core.data_transformer import DataTransformer, DatabaseSync
+from core.data_transformer import DataTransformer
 from core.city_matcher import matches_city
-
-
-class DeviceViewSet(viewsets.ReadOnlyModelViewSet):
-    """设备视图集 - 统一多数据源"""
-    queryset = Device.objects.all()
-    serializer_class = DeviceSerializer
-    lookup_field = 'device_id'
-
-    def get_queryset(self):
-        queryset = super().get_queryset()
-        device_type = self.request.query_params.get('device_type')
-        status_param = self.request.query_params.get('status')
-
-        if device_type:
-            queryset = queryset.filter(device_type=device_type)
-        if status_param:
-            queryset = queryset.filter(status=status_param)
-
-        return queryset
-
-    def list(self, request, *args, **kwargs):
-        """获取设备列表 - 优先使用国家水质数据，通过数据转换层统一格式"""
-        devices = []
-
-        # 优先使用国家水质数据
-        if NationalWaterDataService.enabled():
-            raw_devices = NationalWaterDataService.get_devices()
-            if raw_devices:
-                devices = [DataTransformer.transform_device(d, 'national') for d in raw_devices]
-                # 同步到数据库
-                for d in devices:
-                    DatabaseSync.sync_device(d)
-
-        # 其次使用外部数据源
-        if not devices and OpenWaterDataService.enabled():
-            raw_devices = OpenWaterDataService.get_devices()
-            if raw_devices:
-                devices = [DataTransformer.transform_device(d, 'open') for d in raw_devices]
-                for d in devices:
-                    DatabaseSync.sync_device(d)
-
-        # 最后使用数据库数据
-        if not devices:
-            queryset = self.get_queryset()
-            if queryset.exists():
-                serializer = self.get_serializer(queryset, many=True)
-                devices = serializer.data
-
-        # 如果数据库也没有数据，生成模拟数据
-        if not devices:
-            raw_devices = SensorDataGenerator.generate_device_list(count=10)
-            devices = [DataTransformer.transform_device(d, 'simulator') for d in raw_devices]
-            for d in devices:
-                DatabaseSync.sync_device(d)
-
-        return Response({
-            'code': 200,
-            'message': 'success',
-            'data': {
-                'devices': devices
-            }
-        })
-
+from core.city_resolver import infer_city_name, resolve_area_name
 
 class SensorDataViewSet(viewsets.ReadOnlyModelViewSet):
     """传感器数据视图集 - 使用数据库模型"""
-    queryset = SensorData.objects.select_related('device').all()
+    queryset = SensorData.objects.all()
     serializer_class = SensorDataSerializer
 
     def get_queryset(self):
@@ -135,20 +73,116 @@ class SensorDataViewSet(viewsets.ReadOnlyModelViewSet):
 
         # 其次使用外部数据源
         if not raw_data and OpenWaterDataService.enabled():
-            result = OpenWaterDataService.get_realtime(count=count)
+            result = OpenWaterDataService.get_realtime(
+                count=count,
+                area_id=area_id,
+                city_name=city_name
+            )
             raw_data = result.get("sensors", [])
             if raw_data:
                 source = 'open'
                 total = len(raw_data)
 
-        # 不使用模拟数据 - 只返回真实数据
-        # 如果没有数据，返回空列表
+        # 最后使用数据库快照数据作为备用
+        if not raw_data:
+            from apps.sensors.models import SensorDataSnapshot
+            from datetime import timedelta
+
+            # 获取最近24小时的快照数据
+            time_threshold = timezone.now() - timedelta(hours=24)
+            snapshots = SensorDataSnapshot.objects.filter(
+                snapshot_time__gte=time_threshold
+            ).order_by('-snapshot_time')
+
+            # 应用筛选条件
+            if search_name:
+                snapshots = snapshots.filter(device_name__icontains=search_name)
+            area_name = resolve_area_name(area_id)
+            if area_name:
+                if area_id.endswith("0000"):
+                    snapshots = snapshots.filter(province__icontains=area_name)
+                else:
+                    snapshots = snapshots.filter(
+                        Q(city__icontains=area_name) |
+                        Q(location__icontains=area_name) |
+                        Q(device_name__icontains=area_name) |
+                        Q(province__icontains=area_name)
+                    )
+            if city_name:
+                snapshots = snapshots.filter(
+                    Q(city__icontains=city_name) |
+                    Q(location__icontains=city_name) |
+                    Q(device_name__icontains=city_name)
+                )
+
+            # 按设备分组，取每个设备的最新数据
+            from django.db.models import Max
+            latest_snapshots = snapshots.values('device_id').annotate(
+                latest_time=Max('snapshot_time')
+            )
+
+            sensors_data = []
+            for item in latest_snapshots[:count]:
+                snapshot = SensorDataSnapshot.objects.filter(
+                    device_id=item['device_id'],
+                    snapshot_time=item['latest_time']
+                ).first()
+
+                if snapshot:
+                    sensors_data.append({
+                        'device_id': snapshot.device_id,
+                        'device_name': snapshot.device_name,
+                        'province': snapshot.province or '',
+                        'city': snapshot.city or '',  # 添加city字段
+                        'river_basin': snapshot.river_basin or '',
+                        'water_quality': snapshot.water_quality or '',
+                        'timestamp': snapshot.snapshot_time.isoformat(),
+                        'temperature': float(snapshot.temperature) if snapshot.temperature else None,
+                        'ph': float(snapshot.ph) if snapshot.ph else None,
+                        'dissolved_oxygen': float(snapshot.dissolved_oxygen) if snapshot.dissolved_oxygen else None,
+                        'conductivity': float(snapshot.conductivity) if snapshot.conductivity else None,
+                        'turbidity': float(snapshot.turbidity) if snapshot.turbidity else None,
+                        'permanganate': float(snapshot.permanganate) if snapshot.permanganate else None,
+                        'ammonia_nitrogen': float(snapshot.ammonia_nitrogen) if snapshot.ammonia_nitrogen else None,
+                        'total_phosphorus': float(snapshot.total_phosphorus) if snapshot.total_phosphorus else None,
+                        'total_nitrogen': float(snapshot.total_nitrogen) if snapshot.total_nitrogen else None,
+                        'chlorophyll_a': float(snapshot.chlorophyll_a) if snapshot.chlorophyll_a else None,
+                        'algae_density': float(snapshot.algae_density) if snapshot.algae_density else None,
+                    })
+
+            raw_data = sensors_data
+            source = 'database'
+            total = len(latest_snapshots)
 
         # 通过数据转换层统一格式
         sensors = []
         for item in raw_data:
             transformed = DataTransformer.transform_realtime_data(item, source)
+            if not transformed.get("city"):
+                transformed["city"] = infer_city_name(
+                    (transformed.get("device_name"), transformed.get("location")),
+                    transformed.get("province") or "",
+                    transformed.get("device_id") or ""
+                )
             sensors.append(transformed)
+
+        filter_city = city_name
+        if not filter_city and area_id and not area_id.endswith("0000"):
+            filter_city = resolve_area_name(area_id)
+        if filter_city:
+            sensors = [
+                sensor for sensor in sensors
+                if matches_city(
+                    filter_city,
+                    (
+                        sensor.get("location"),
+                        sensor.get("device_name"),
+                        sensor.get("city"),
+                        sensor.get("province"),
+                    )
+                )
+            ]
+            total = len(sensors)
 
         return Response({
             'code': 200,
@@ -227,7 +261,7 @@ class SensorDataViewSet(viewsets.ReadOnlyModelViewSet):
 
 class AlertViewSet(viewsets.ModelViewSet):
     """告警视图集 - 统一告警数据"""
-    queryset = Alert.objects.select_related('device').all()
+    queryset = Alert.objects.all()
     serializer_class = AlertSerializer
     filterset_fields = ['alert_type', 'alert_level', 'resolved']
 

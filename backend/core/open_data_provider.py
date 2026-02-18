@@ -16,6 +16,9 @@ from typing import Any, Dict, Iterable, List, Optional
 from django.conf import settings
 from django.utils import timezone
 
+from core.city_matcher import matches_city
+from core.national_water_data import AREA_CODES, CITY_CODES
+
 logger = logging.getLogger(__name__)
 
 
@@ -39,6 +42,14 @@ class OpenWaterRecord:
 
 
 _cache: Dict[str, Any] = {"records": None, "fetched_at": None}
+_AREA_CODE_TO_NAME = {code: name for name, code in AREA_CODES.items() if code}
+_CITY_CODE_TO_NAME = {code: name for name, code in CITY_CODES.items() if code}
+
+
+def _resolve_area_name(area_id: str) -> Optional[str]:
+    if not area_id:
+        return None
+    return _CITY_CODE_TO_NAME.get(area_id) or _AREA_CODE_TO_NAME.get(area_id)
 
 
 def _get_config() -> Dict[str, Any]:
@@ -259,10 +270,20 @@ class OpenWaterDataService:
         return list(devices.values())
 
     @staticmethod
-    def get_realtime(count: int = 5) -> Dict[str, Any]:
+    def get_realtime(
+        count: int = 5,
+        area_id: str = "",
+        city_name: str = ""
+    ) -> Dict[str, Any]:
         records = fetch_records()
         if not records:
             return {"timestamp": timezone.now().isoformat(), "sensors": []}
+        filter_name = city_name or _resolve_area_name(area_id)
+        if filter_name:
+            records = [
+                record for record in records
+                if matches_city(filter_name, (record.location, record.device_name))
+            ]
         latest_by_device: Dict[str, OpenWaterRecord] = {}
         for record in records:
             current = latest_by_device.get(record.device_id)

@@ -3,27 +3,11 @@
 支持国家水质自动综合监管平台、开放数据和模拟数据
 """
 from rest_framework import serializers
-from .models import Device, SensorData, Alert
-
-
-class DeviceSerializer(serializers.ModelSerializer):
-    """设备序列化器 - 完整字段"""
-    is_online = serializers.BooleanField(read_only=True)
-
-    class Meta:
-        model = Device
-        fields = ['id', 'device_id', 'device_name', 'device_type', 'location',
-                  'province', 'province_code', 'river_basin', 'river_basin_code',
-                  'status', 'last_data_time', 'is_online',
-                  'created_at', 'updated_at']
-        read_only_fields = ['created_at', 'updated_at', 'is_online']
+from .models import SensorData, Alert
 
 
 class SensorDataSerializer(serializers.ModelSerializer):
     """传感器数据序列化器 - 数据库模型序列化"""
-    device_id = serializers.CharField(source='device.device_id', read_only=True)
-    device_name = serializers.CharField(source='device.device_name', read_only=True)
-
     class Meta:
         model = SensorData
         fields = ['id', 'device_id', 'device_name', 'temperature', 'ph',
@@ -82,8 +66,6 @@ class HistoricalDataSerializer(serializers.Serializer):
 
 class AlertSerializer(serializers.ModelSerializer):
     """告警序列化器 - 统一字段命名"""
-    device_id = serializers.CharField(source='device.device_id', read_only=True)
-    device_name = serializers.CharField(source='device.device_name', read_only=True)
     alert_type_display = serializers.CharField(source='get_alert_type_display', read_only=True)
     alert_level_display = serializers.CharField(source='get_alert_level_display', read_only=True)
 
@@ -98,27 +80,18 @@ class AlertSerializer(serializers.ModelSerializer):
 class AlertCreateSerializer(serializers.ModelSerializer):
     """告警创建序列化器 - 支持从不同数据源转换"""
     device_id = serializers.CharField(write_only=True)
+    device_name = serializers.CharField(required=False, allow_blank=True, allow_null=True, write_only=True)
 
     class Meta:
         model = Alert
-        fields = ['device_id', 'alert_type', 'alert_level', 'message',
+        fields = ['device_id', 'device_name', 'alert_type', 'alert_level', 'message',
                   'value', 'value_unit', 'data_source']
 
     def create(self, validated_data):
-        """创建告警时自动关联设备"""
-        from .models import Device
-        device_id = validated_data.pop('device_id')
-        try:
-            device = Device.objects.get(device_id=device_id)
-        except Device.DoesNotExist:
-            # 如果设备不存在，自动创建
-            device = Device.objects.create(
-                device_id=device_id,
-                device_name=device_id,
-                device_type='sensor',
-                status='online'
-            )
-        validated_data['device'] = device
+        """创建告警时补齐设备名称"""
+        device_id = validated_data.get('device_id')
+        device_name = validated_data.get('device_name') or device_id
+        validated_data['device_name'] = device_name
         return Alert.objects.create(**validated_data)
 
 

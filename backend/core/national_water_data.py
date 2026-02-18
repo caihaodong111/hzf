@@ -228,29 +228,39 @@ class NationalWaterDataAPI:
         return dj_timezone.now() - fetched_at < dj_timezone.timedelta(minutes=self._cache_minutes)
 
     def _fetch_data(self, params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """发送请求获取数据"""
+        """发送请求获取数据 - 使用requests库（与原pc代码一致）"""
         try:
-            # 构建POST数据
-            post_data = urllib.parse.urlencode(params).encode('utf-8')
+            import requests
+            from requests.adapters import HTTPAdapter
+            from urllib3.util.retry import Retry
 
-            # 创建请求
-            req = urllib.request.Request(
+            # 创建session以复用连接
+            session = requests.Session()
+
+            # 设置重试策略
+            retry = Retry(total=3, backoff_factor=0.3)
+            adapter = HTTPAdapter(max_retries=retry)
+            session.mount('http://', adapter)
+            session.mount('https://', adapter)
+
+            # 禁用SSL警告
+            import urllib3
+            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+            # 发送POST请求
+            response = session.post(
                 self.API_URL,
-                data=post_data,
-                method='POST',
+                data=params,
+                timeout=30,
+                verify=False,  # 忽略SSL证书验证
                 headers={
                     'Content-Type': 'application/x-www-form-urlencoded',
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
                 }
             )
+            response.raise_for_status()
 
-            # 忽略SSL证书验证
-            import ssl
-            context = ssl._create_unverified_context()
-
-            with urllib.request.urlopen(req, timeout=30, context=context) as response:
-                data = json.loads(response.read().decode('utf-8'))
-                return data
+            return response.json()
 
         except Exception as e:
             logger.warning(f"国家水质数据获取失败: {e}")

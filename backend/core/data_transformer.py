@@ -166,6 +166,7 @@ class DataTransformer:
             'device_name': device_name,
             'location': data.get('location'),
             'timestamp': data.get('timestamp') or data.get('recorded_at'),
+            'city': data.get('city'),
         }
 
         # 根据数据来源提取字段
@@ -232,6 +233,7 @@ class DataTransformer:
             # 数据库数据
             transformed.update({
                 'province': data.get('device__province') or data.get('province'),
+                'city': data.get('device__city') or data.get('city'),
                 'river_basin': data.get('device__river_basin') or data.get('river_basin'),
                 'water_quality': cls.normalize_water_quality(data.get('water_quality')),
                 'temperature': cls._to_float(data.get('temperature')),
@@ -249,12 +251,11 @@ class DataTransformer:
                 'algae_density': cls._to_float(data.get('algae_density')),
             })
 
-        # 尝试从断面名称中提取城市信息
-        city = cls.extract_city_from_name(device_name, province)
-        if city:
-            transformed['city'] = city
-        else:
-            transformed['city'] = data.get('city')  # 使用原始数据中的城市字段（如果有）
+        # 尝试从断面名称中提取城市信息（仅当原始数据中没有城市时）
+        if not transformed.get('city'):
+            city = cls.extract_city_from_name(device_name, province)
+            if city:
+                transformed['city'] = city
 
         return transformed
 
@@ -388,49 +389,15 @@ class DatabaseSync:
     """数据库同步器 - 将外部数据同步到数据库"""
 
     @staticmethod
-    def sync_device(device_data: Dict[str, Any]) -> Any:
-        """同步设备到数据库"""
-        from apps.sensors.models import Device
-
-        device_id = device_data.get('device_id')
-        if not device_id:
-            return None
-
-        defaults = {
-            'device_name': device_data.get('device_name', device_id),
-            'device_type': device_data.get('device_type', 'sensor'),
-            'location': device_data.get('location'),
-            'province': device_data.get('province'),
-            'province_code': device_data.get('province_code'),
-            'river_basin': device_data.get('river_basin'),
-            'river_basin_code': device_data.get('river_basin_code'),
-            'status': device_data.get('status', 'online'),
-        }
-
-        device, created = Device.objects.update_or_create(
-            device_id=device_id,
-            defaults=defaults
-        )
-        return device
-
-    @staticmethod
     def sync_sensor_data(data: Dict[str, Any], source: str) -> Any:
         """同步传感器数据到数据库"""
         from datetime import datetime
         from django.utils import timezone
-        from apps.sensors.models import Device, SensorData
+        from apps.sensors.models import SensorData
 
         device_id = data.get('device_id')
         if not device_id:
             return None
-
-        # 确保设备存在
-        try:
-            device = Device.objects.get(device_id=device_id)
-        except Device.DoesNotExist:
-            device = DatabaseSync.sync_device(data)
-            if not device:
-                return None
 
         # 解析时间
         recorded_at = DataTransformer._parse_datetime(data.get('timestamp'))
@@ -439,7 +406,8 @@ class DatabaseSync:
 
         # 准备数据
         sensor_data = {
-            'device': device,
+            'device_id': device_id,
+            'device_name': data.get('device_name', device_id),
             'temperature': DataTransformer._to_float(data.get('temperature')),
             'ph': DataTransformer._to_float(data.get('ph')),
             'dissolved_oxygen': DataTransformer._to_float(data.get('dissolved_oxygen')),
@@ -463,24 +431,12 @@ class DatabaseSync:
     @staticmethod
     def sync_alert(alert_data: Dict[str, Any], source: str) -> Any:
         """同步告警到数据库"""
-        from apps.sensors.models import Device, Alert
+        from datetime import datetime
+        from apps.sensors.models import Alert
 
         device_id = alert_data.get('device_id')
         if not device_id:
             return None
-
-        # 确保设备存在
-        try:
-            device = Device.objects.get(device_id=device_id)
-        except Device.DoesNotExist:
-            device = DatabaseSync.sync_device({
-                'device_id': device_id,
-                'device_name': alert_data.get('device_name', device_id),
-                'device_type': 'sensor',
-                'status': 'online',
-            })
-            if not device:
-                return None
 
         # 解析时间
         created_at = DataTransformer._parse_datetime(alert_data.get('created_at') or alert_data.get('timestamp'))
@@ -489,7 +445,8 @@ class DatabaseSync:
 
         # 准备数据
         alert = {
-            'device': device,
+            'device_id': device_id,
+            'device_name': alert_data.get('device_name', device_id),
             'alert_type': DataTransformer.normalize_alert_type(alert_data.get('alert_type') or alert_data.get('type')),
             'alert_level': DataTransformer.normalize_alert_level(alert_data.get('alert_level') or alert_data.get('level')),
             'message': alert_data.get('message', '数据异常'),

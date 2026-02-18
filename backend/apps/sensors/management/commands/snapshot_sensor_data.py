@@ -19,6 +19,7 @@ from core.national_water_data import NationalWaterDataService
 from core.open_data_provider import OpenWaterDataService
 from core.data_generator import SensorDataGenerator
 from core.data_transformer import DataTransformer
+from core.city_resolver import infer_city_name
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +44,7 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         """执行快照任务"""
-        from apps.sensors.models import SensorDataSnapshot, Device
+        from apps.sensors.models import SensorDataSnapshot
 
         force = options.get('force', False)
         interval = options.get('interval', 60)
@@ -110,11 +111,17 @@ class Command(BaseCommand):
                 transformed = DataTransformer.transform_realtime_data(sensor, source)
 
                 # 准备快照数据
+                city_name = infer_city_name(
+                    (transformed.get('device_name'), transformed.get('location')),
+                    transformed.get('province') or '',
+                    transformed.get('device_id') or ''
+                )
                 snapshot_data = {
                     'device_id': transformed.get('device_id'),
                     'device_name': transformed.get('device_name'),
                     'location': transformed.get('location'),
                     'province': transformed.get('province'),
+                    'city': city_name,
                     'river_basin': transformed.get('river_basin'),
                     'temperature': self._to_decimal(transformed.get('temperature')),
                     'ph': self._to_decimal(transformed.get('ph')),
