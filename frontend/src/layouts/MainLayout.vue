@@ -13,17 +13,24 @@
 
         <!-- 导航菜单 -->
         <nav class="sidebar-nav">
-          <router-link
+          <el-tooltip
             v-for="item in menuItems"
             :key="item.path"
-            :to="item.path"
-            class="nav-item"
-            :class="{ active: isActive(item.path) }"
+            :content="item.title"
+            placement="right"
+            :offset="12"
+            effect="light"
           >
-            <el-icon>
-              <component :is="item.icon" />
-            </el-icon>
-          </router-link>
+            <router-link
+              :to="item.path"
+              class="nav-item"
+              :class="{ active: isActive(item.path) }"
+            >
+              <el-icon>
+                <component :is="item.icon" />
+              </el-icon>
+            </router-link>
+          </el-tooltip>
         </nav>
 
       </div>
