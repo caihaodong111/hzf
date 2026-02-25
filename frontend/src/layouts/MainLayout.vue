@@ -26,10 +26,6 @@
           </router-link>
         </nav>
 
-        <!-- 用户信息 -->
-        <div class="sidebar-user">
-          <el-avatar :size="36">管</el-avatar>
-        </div>
       </div>
     </aside>
 
@@ -154,15 +150,6 @@ const isActive = (path) => {
       box-shadow: 0 8px 20px rgba(79, 172, 254, 0.2);
     }
   }
-}
-
-// 用户信息
-.sidebar-user {
-  display: flex;
-  justify-content: center;
-  padding: 20px 0;
-  margin-top: auto;
-  border-top: 1px solid rgba(15, 23, 42, 0.08);
 }
 
 // 主内容区 - 参考国家平台设计，固定高度布局
