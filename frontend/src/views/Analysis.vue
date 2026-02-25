@@ -19,88 +19,87 @@
       </div>
     </header>
 
-    <main class="dashboard-grid">
-      <section class="kpi-sidebar">
-        <div class="kpi-card glass-card gold">
-          <div class="kpi-info">
-            <span class="label">水质综合指数</span>
-            <span class="value">{{ qualityIndex }}</span>
-          </div>
-          <div ref="indexChartRef" class="mini-chart"></div>
-        </div>
-        <div class="kpi-mini-grid">
-          <div class="mini-card glass-card">
-            <span class="label">在线站点</span>
-            <span class="value">{{ overview.online_devices || onlineCount }}</span>
-            <span class="sub">总数 {{ sensors.length }}</span>
-          </div>
-          <div class="mini-card glass-card">
-            <span class="label">告警数量</span>
-            <span class="value danger">{{ overview.alert_count || 0 }}</span>
-            <span class="sub">近 {{ timeRange }}h</span>
-          </div>
-        </div>
-        <div class="metrics-card glass-card">
-          <div class="card-header">核心指标均值</div>
-          <div class="metric-item">
-            <span>水温</span>
-            <div class="bar-bg">
-              <div class="bar-fill" :style="{ width: (avgMetrics.temperature / 40) * 100 + '%' }"></div>
+    <main class="analysis-layout">
+      <section class="rail">
+        <div class="kpi-stack">
+          <div class="kpi-card glass-card">
+            <div class="kpi-info">
+              <span class="label">水质综合指数</span>
+              <span class="value">{{ qualityIndex }}</span>
             </div>
-            <span class="num">{{ avgMetrics.temperature }}°C</span>
+            <div ref="indexChartRef" class="mini-chart"></div>
           </div>
-          <div class="metric-item">
-            <span>溶解氧</span>
-            <div class="bar-bg">
-              <div class="bar-fill oxygen" :style="{ width: (avgMetrics.dissolved_oxygen / 15) * 100 + '%' }"></div>
+          <div class="kpi-mini-grid">
+            <div class="mini-card glass-card">
+              <span class="label">在线站点</span>
+              <span class="value">{{ overview.online_devices || onlineCount }}</span>
+              <span class="sub">总数 {{ sensors.length }}</span>
             </div>
-            <span class="num">{{ avgMetrics.dissolved_oxygen }}</span>
+            <div class="mini-card glass-card">
+              <span class="label">告警数量</span>
+              <span class="value danger">{{ overview.alert_count || 0 }}</span>
+              <span class="sub">近 {{ timeRange }}h</span>
+            </div>
           </div>
-          <div class="metric-item">
-            <span>pH值</span>
-            <div class="bar-bg">
-              <div class="bar-fill ph" :style="{ width: (avgMetrics.ph / 14) * 100 + '%' }"></div>
+          <div class="metrics-card glass-card">
+            <div class="card-header">核心指标均值</div>
+            <div class="metric-item">
+              <span>水温</span>
+              <div class="bar-bg">
+                <div class="bar-fill" :style="{ width: (avgMetrics.temperature / 40) * 100 + '%' }"></div>
+              </div>
+              <span class="num">{{ avgMetrics.temperature }}°C</span>
             </div>
-            <span class="num">{{ avgMetrics.ph }}</span>
+            <div class="metric-item">
+              <span>溶解氧</span>
+              <div class="bar-bg">
+                <div class="bar-fill oxygen" :style="{ width: (avgMetrics.dissolved_oxygen / 15) * 100 + '%' }"></div>
+              </div>
+              <span class="num">{{ avgMetrics.dissolved_oxygen }}</span>
+            </div>
+            <div class="metric-item">
+              <span>pH值</span>
+              <div class="bar-bg">
+                <div class="bar-fill ph" :style="{ width: (avgMetrics.ph / 14) * 100 + '%' }"></div>
+              </div>
+              <span class="num">{{ avgMetrics.ph }}</span>
+            </div>
           </div>
         </div>
-      </section>
 
-      <section class="main-content">
         <section class="risk-section glass-card">
           <div class="card-header-flex">
             <div class="title-group">
-              <h3>风险站点清单</h3>
-              <span class="subtitle">共 {{ riskTable.length }} 个站点</span>
+              <h3>风险站点</h3>
+              <span class="subtitle">共 {{ riskTable.length }} 个</span>
             </div>
             <el-tag type="danger" effect="dark" round>高风险优先</el-tag>
           </div>
-          <el-table :data="riskTable" style="width: 100%" height="240" class="custom-table">
-            <el-table-column prop="device_name" label="站点名称" min-width="160" show-overflow-tooltip />
-            <el-table-column prop="water_quality" label="水质" width="80">
+          <el-table :data="riskTable" style="width: 100%" height="320" class="custom-table compact">
+            <el-table-column prop="device_name" label="站点" min-width="140" show-overflow-tooltip>
+              <template #default="{ row }">
+                <div class="risk-name">{{ row.device_name || '-' }}</div>
+                <div class="risk-meta">
+                  DO {{ row.dissolved_oxygen ?? '-' }} · pH {{ row.ph ?? '-' }}
+                </div>
+              </template>
+            </el-table-column>
+            <el-table-column prop="water_quality" label="水质" width="72">
               <template #default="{ row }">
                 <span class="quality-dot" :style="{ background: qualityColors[row.water_quality] }"></span>
                 {{ row.water_quality || '未知' }}
               </template>
             </el-table-column>
-            <el-table-column prop="dissolved_oxygen" label="溶解氧" width="90" align="right">
-              <template #default="{ row }">
-                {{ row.dissolved_oxygen ?? '-' }}
-              </template>
-            </el-table-column>
-            <el-table-column prop="ph" label="pH值" width="80" align="right">
-              <template #default="{ row }">
-                {{ row.ph ?? '-' }}
-              </template>
-            </el-table-column>
-            <el-table-column prop="risk_score" label="风险分" width="80" align="center" sortable>
+            <el-table-column prop="risk_score" label="风险" width="68" align="center" sortable>
               <template #default="{ row }">
                 <span :class="['score-tag', row.risk_tag]">{{ row.risk_score }}</span>
               </template>
             </el-table-column>
           </el-table>
         </section>
+      </section>
 
+      <section class="canvas">
         <section class="trend-section glass-card">
           <div class="card-header-flex">
             <div class="title-info">
@@ -117,22 +116,21 @@
               />
             </div>
           </div>
-          <div ref="trendChartRef" class="chart-box"></div>
+          <div ref="trendChartRef" class="chart-box trend-chart"></div>
+        </section>
+
+        <section class="charts-row">
+          <section class="chart-secondary glass-card quality-chart">
+            <div class="card-title">水质类别占比</div>
+            <div ref="qualityChartRef" class="chart-box"></div>
+          </section>
+
+          <section class="chart-secondary glass-card province-chart">
+            <div class="card-title">省内站点 Top 10</div>
+            <div ref="provinceChartRef" class="chart-box"></div>
+          </section>
         </section>
       </section>
-
-      <section class="charts-column">
-        <section class="chart-secondary glass-card quality-chart">
-          <div class="card-title">水质类别占比</div>
-          <div ref="qualityChartRef" class="chart-box"></div>
-        </section>
-
-        <section class="chart-secondary glass-card province-chart">
-          <div class="card-title">省内站点 Top 10</div>
-          <div ref="provinceChartRef" class="chart-box"></div>
-        </section>
-      </section>
-
     </main>
   </div>
 </template>
@@ -278,7 +276,7 @@ const updateCharts = () => {
         smooth: true,
         showSymbol: false,
         data: trendHistory.value.map(item => item.dissolved_oxygen),
-        lineStyle: { width: 3, color: '#0984e3' },
+        lineStyle: { width: 3, color: '#0ea5e9' },
         areaStyle: {
           color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
             { offset: 0, color: 'rgba(9, 132, 227, 0.2)' },
@@ -292,7 +290,7 @@ const updateCharts = () => {
         smooth: true,
         showSymbol: false,
         data: trendHistory.value.map(item => item.ph),
-        lineStyle: { width: 3, color: '#6c5ce7' }
+        lineStyle: { width: 3, color: '#14b8a6' }
       }
     ]
   })
@@ -311,7 +309,7 @@ const updateCharts = () => {
           overlap: false,
           roundCap: true,
           width: 8,
-          itemStyle: { color: '#fdcb6e' }
+          itemStyle: { color: '#f59e0b' }
         },
         axisLine: { lineStyle: { width: 8 } },
         splitLine: { show: false },
@@ -348,8 +346,8 @@ const updateCharts = () => {
         data: sorted.map(item => item[1]),
         itemStyle: {
           color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-            { offset: 0, color: '#667eea' },
-            { offset: 1, color: '#764ba2' }
+            { offset: 0, color: '#0ea5e9' },
+            { offset: 1, color: '#14b8a6' }
           ]),
           borderRadius: [6, 6, 0, 0]
         }
@@ -453,21 +451,53 @@ onUnmounted(() => {
 
 <style scoped lang="scss">
 :host {
-  --primary: #0984e3;
-  --glass: rgba(255, 255, 255, 0.8);
+  --primary: #0ea5e9;
+  --glass: rgba(255, 255, 255, 0.86);
 }
 
 .analysis-container {
-  padding: 20px 30px;
-  background-color: #f0f2f5;
-  background-image:
-    radial-gradient(at 0% 0%, rgba(9, 132, 227, 0.05) 0px, transparent 50%),
-    radial-gradient(at 100% 100%, rgba(108, 92, 231, 0.05) 0px, transparent 50%);
+  padding: 24px 30px;
   min-height: 100vh;
+  color: #0f172a;
+  font-family: "Space Grotesk", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+  background:
+    radial-gradient(circle at 15% 15%, rgba(16, 185, 129, 0.16), transparent 45%),
+    radial-gradient(circle at 85% 0%, rgba(245, 158, 11, 0.18), transparent 50%),
+    linear-gradient(160deg, #f5f7fb 0%, #edf2f7 45%, #f3f4f6 100%);
+  position: relative;
+  overflow: hidden;
+}
+
+.analysis-container::before,
+.analysis-container::after {
+  content: "";
+  position: absolute;
+  border-radius: 999px;
+  filter: blur(0.5px);
+  opacity: 0.35;
+  z-index: 0;
+}
+
+.analysis-container::before {
+  width: 360px;
+  height: 360px;
+  background: conic-gradient(from 90deg, rgba(14, 165, 233, 0.2), transparent 55%);
+  top: -140px;
+  right: 6%;
+}
+
+.analysis-container::after {
+  width: 280px;
+  height: 280px;
+  background: radial-gradient(circle, rgba(245, 158, 11, 0.28), transparent 60%);
+  bottom: -120px;
+  left: 6%;
 }
 
 .dashboard-header {
   margin-bottom: 24px;
+  position: relative;
+  z-index: 1;
 
   .header-content {
     display: flex;
@@ -477,15 +507,15 @@ onUnmounted(() => {
 
   h1 {
     font-size: 24px;
-    color: #1e293b;
+    color: #0f172a;
     margin: 0;
 
     .badge {
       font-size: 12px;
-      background: #fff;
+      background: rgba(255, 255, 255, 0.9);
       padding: 2px 8px;
       border-radius: 12px;
-      border: 1px solid #e2e8f0;
+      border: 1px solid rgba(15, 23, 42, 0.08);
       vertical-align: middle;
     }
   }
@@ -532,27 +562,31 @@ onUnmounted(() => {
   }
 }
 
-.dashboard-grid {
+.analysis-layout {
   display: grid;
-  grid-template-columns: 280px 1fr 280px;
-  grid-template-rows: auto;
-  grid-template-areas:
-    "sidebar main charts";
-  gap: 20px;
+  grid-template-columns: 320px minmax(0, 1fr);
+  gap: 22px;
+  position: relative;
+  z-index: 1;
 }
 
-.kpi-sidebar {
-  grid-area: sidebar;
+.rail {
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 22px;
 }
 
-.main-content {
-  grid-area: main;
+.canvas {
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 22px;
+  min-width: 0;
+}
+
+.kpi-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
 }
 
 .risk-section {
@@ -576,14 +610,16 @@ onUnmounted(() => {
 .trend-section {
   display: flex;
   flex-direction: column;
-  flex: 1;
-  min-height: 0;
+  min-height: 340px;
 }
 
-.charts-column {
-  grid-area: charts;
-  display: flex;
-  flex-direction: column;
+.trend-chart {
+  min-height: 300px;
+}
+
+.charts-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 20px;
 }
 
@@ -603,21 +639,21 @@ onUnmounted(() => {
 
 .glass-card {
   background: var(--glass);
-  backdrop-filter: blur(10px);
-  border-radius: 20px;
-  border: 1px solid rgba(255, 255, 255, 0.6);
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.03);
+  backdrop-filter: blur(12px);
+  border-radius: 22px;
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
   padding: 20px;
-  transition: transform 0.3s ease;
+  transition: transform 0.25s ease, box-shadow 0.25s ease;
 
   &:hover {
-    transform: translateY(-3px);
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.06);
+    transform: translateY(-2px);
+    box-shadow: 0 18px 40px rgba(15, 23, 42, 0.12);
   }
 }
 
-.kpi-card.gold {
-  background: linear-gradient(135deg, #fff 0%, #fff9e6 100%);
+.kpi-card {
+  background: linear-gradient(140deg, rgba(255, 255, 255, 0.95), rgba(236, 253, 245, 0.9));
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -625,14 +661,14 @@ onUnmounted(() => {
   .kpi-info {
     .label {
       font-size: 13px;
-      color: #845e12;
+      color: #0f766e;
       display: block;
     }
 
     .value {
       font-size: 32px;
       font-weight: 800;
-      color: #b7791f;
+      color: #0f172a;
     }
   }
 
@@ -652,7 +688,7 @@ onUnmounted(() => {
 
     .label {
       font-size: 12px;
-      color: #64748b;
+      color: #475569;
       display: block;
     }
 
@@ -664,7 +700,7 @@ onUnmounted(() => {
     }
 
     .value.danger {
-      color: #ef4444;
+      color: #dc2626;
     }
 
     .sub {
@@ -699,17 +735,17 @@ onUnmounted(() => {
 
   .bar-fill {
     height: 100%;
-    background: #fdcb6e;
+    background: #f59e0b;
     width: 0;
     transition: width 1s;
   }
 
   .bar-fill.oxygen {
-    background: #0984e3;
+    background: #0ea5e9;
   }
 
   .bar-fill.ph {
-    background: #6c5ce7;
+    background: #14b8a6;
   }
 
   .num {
@@ -746,6 +782,17 @@ onUnmounted(() => {
   flex: 1;
   min-height: 0;
   width: 100%;
+}
+
+.risk-name {
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.risk-meta {
+  font-size: 11px;
+  color: #94a3b8;
+  margin-top: 2px;
 }
 
 .custom-table {
@@ -817,12 +864,12 @@ onUnmounted(() => {
 }
 
 @media (max-width: 1200px) {
-  .dashboard-grid {
+  .analysis-layout {
     grid-template-columns: 1fr;
-    grid-template-areas:
-      "sidebar"
-      "main"
-      "charts";
+  }
+
+  .charts-row {
+    grid-template-columns: 1fr;
   }
 
   .risk-section {
