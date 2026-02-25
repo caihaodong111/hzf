@@ -10,7 +10,8 @@ class SensorDataSerializer(serializers.ModelSerializer):
     """传感器数据序列化器 - 数据库模型序列化"""
     class Meta:
         model = SensorData
-        fields = ['id', 'device_id', 'device_name', 'temperature', 'ph',
+        fields = ['id', 'device_id', 'device_name', 'location', 'province', 'city', 'river_basin',
+                  'temperature', 'ph',
                   'dissolved_oxygen', 'conductivity', 'turbidity', 'salinity',
                   'water_quality', 'permanganate', 'ammonia_nitrogen',
                   'total_phosphorus', 'total_nitrogen', 'chlorophyll_a',

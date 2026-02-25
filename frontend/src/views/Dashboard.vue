@@ -9,6 +9,15 @@
           <p>实时监控全域 {{ total }} 个断面数据</p>
         </div>
         <div class="top-actions">
+          <button
+            v-if="isManualMode"
+            class="action-btn manual-btn"
+            type="button"
+            :disabled="isManualFetching"
+            @click="handleManualFetch"
+          >
+            {{ isManualFetching ? '获取中...' : '获取' }}
+          </button>
           <button class="action-btn" @click="handleManualRefresh">
             <el-icon :class="{ spinning: isRefreshing }"><Refresh /></el-icon>
           </button>
@@ -165,13 +174,16 @@
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { getRealtimeData as apiGetRealtimeData } from '@/api/sensors'
+import { getRealtimeData as apiGetRealtimeData, syncRealtimeData } from '@/api/sensors'
+import { getDataSourceSettings } from '@/api/settings'
 import sensorStore from '@/stores/sensorStore'
 import { DataLine, Warning, Refresh, CircleCheck, ArrowDown, Search } from '@element-plus/icons-vue'
 
 const loading = ref(false)
 const sensors = ref([])
 const total = ref(0)
+const dataSourceMode = ref('auto')
+const isManualFetching = ref(false)
 const autoRefresh = ref(true)
 const refreshInterval = ref(30)
 const progressPercent = ref(0)
@@ -189,6 +201,7 @@ const filters = ref({
 })
 
 const filteredSensors = computed(() => sensors.value)
+const isManualMode = computed(() => dataSourceMode.value === 'manual')
 
 const sensorsCount = computed(() => filteredSensors.value.length)
 const shouldScroll = computed(() => filteredSensors.value.length > 8)
@@ -504,8 +517,30 @@ const loadRealtimeData = async (isAuto = false, forceRefresh = false) => {
   }
 }
 
+const loadDataSourceMode = async () => {
+  try {
+    const res = await getDataSourceSettings()
+    dataSourceMode.value = res?.data?.mode || 'auto'
+  } catch (error) {
+    dataSourceMode.value = 'auto'
+  }
+}
+
 const handleManualRefresh = () => {
   loadRealtimeData(false)
+}
+
+const handleManualFetch = async () => {
+  if (isManualFetching.value) return
+  isManualFetching.value = true
+  try {
+    await syncRealtimeData()
+    await loadRealtimeData(false, true)
+  } catch (error) {
+    console.error('手动获取数据失败:', error)
+  } finally {
+    isManualFetching.value = false
+  }
 }
 
 const toggleAutoRefresh = (enabled) => {
@@ -620,7 +655,11 @@ const isOnline = (timestamp) => {
   return diff < 60
 }
 
-onMounted(() => {
+onMounted(async () => {
+  await loadDataSourceMode()
+  if (isManualMode.value) {
+    sensorStore.clearCache()
+  }
   loadRealtimeData()
 
   if (autoRefresh.value) {
@@ -702,6 +741,18 @@ $text-sub: #64748b;
       padding: 8px 12px;
       cursor: pointer;
       color: $text-main;
+    }
+
+    .manual-btn {
+      padding: 8px 16px;
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 0.4px;
+    }
+
+    .action-btn:disabled {
+      cursor: not-allowed;
+      opacity: 0.6;
     }
   }
 }

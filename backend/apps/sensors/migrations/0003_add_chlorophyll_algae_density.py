@@ -6,7 +6,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ("sensors", "0002_sensordatasnapshot"),
+        ("sensors", "0001_initial"),
     ]
 
     operations = [
@@ -23,28 +23,6 @@ class Migration(migrations.Migration):
         ),
         migrations.AddField(
             model_name="sensordata",
-            name="chlorophyll_a",
-            field=models.DecimalField(
-                blank=True,
-                decimal_places=3,
-                max_digits=6,
-                null=True,
-                verbose_name="叶绿素a(mg/L)",
-            ),
-        ),
-        migrations.AddField(
-            model_name="sensordatasnapshot",
-            name="algae_density",
-            field=models.DecimalField(
-                blank=True,
-                decimal_places=2,
-                max_digits=12,
-                null=True,
-                verbose_name="藻密度(cells/L)",
-            ),
-        ),
-        migrations.AddField(
-            model_name="sensordatasnapshot",
             name="chlorophyll_a",
             field=models.DecimalField(
                 blank=True,

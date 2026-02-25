@@ -8,10 +8,11 @@ import urllib.error
 
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
+from django.db.models import Avg, Max
 from django.utils import timezone
 from datetime import timedelta
 
-from apps.sensors.models import SensorData, SensorDataSnapshot, Alert
+from apps.sensors.models import ManualSensorData, SensorData, Alert
 from core.open_data_provider import OpenWaterDataService
 from core.national_water_data import NationalWaterDataService
 from core.data_transformer import DataTransformer
@@ -27,24 +28,54 @@ def overview(request):
     """获取看板概览数据 - 使用真实统计数据"""
     hours = int(request.query_params.get('hours', 24))
     count = int(request.query_params.get('count', 10))
+    manual_mode = get_data_source_mode() == 'manual'
 
     # 获取实时数据用于展示
     realtime_data = None
     source = None
 
-    for preferred in get_data_source_priority():
-        if preferred == 'national' and NationalWaterDataService.enabled():
-            result = NationalWaterDataService.get_realtime(count=count)
-            if result.get("sensors"):
-                realtime_data = result
-                source = 'national'
-                break
-        if preferred == 'open' and OpenWaterDataService.enabled():
-            result = OpenWaterDataService.get_realtime(count=count)
-            if result.get("sensors"):
-                realtime_data = result
-                source = 'open'
-                break
+    target_model = ManualSensorData if manual_mode else SensorData
+    latest_records = target_model.objects.exclude(device_id__isnull=True).values('device_id').annotate(
+        latest_time=Max('recorded_at')
+    ).order_by('-latest_time')
+    latest_time = latest_records.aggregate(max_time=Max('latest_time')).get('max_time')
+    sensors = []
+    for item in latest_records[:count]:
+        record = target_model.objects.filter(
+            device_id=item['device_id'],
+            recorded_at=item['latest_time']
+        ).first()
+        if not record:
+            continue
+        transformed = DataTransformer.transform_realtime_data({
+            'device_id': record.device_id,
+            'device_name': record.device_name,
+            'location': record.location,
+            'province': record.province,
+            'city': record.city,
+            'river_basin': record.river_basin,
+            'water_quality': record.water_quality,
+            'temperature': record.temperature,
+            'ph': record.ph,
+            'dissolved_oxygen': record.dissolved_oxygen,
+            'conductivity': record.conductivity,
+            'turbidity': record.turbidity,
+            'salinity': record.salinity,
+            'permanganate': record.permanganate,
+            'ammonia_nitrogen': record.ammonia_nitrogen,
+            'total_phosphorus': record.total_phosphorus,
+            'total_nitrogen': record.total_nitrogen,
+            'chlorophyll_a': record.chlorophyll_a,
+            'algae_density': record.algae_density,
+            'recorded_at': record.recorded_at,
+        }, 'database')
+        transformed['data_source'] = 'manual' if manual_mode else (record.data_source or 'auto')
+        sensors.append(transformed)
+    realtime_data = {
+        'sensors': sensors,
+        'timestamp': (latest_time or timezone.now()).isoformat()
+    }
+    source = 'manual' if manual_mode else ('auto' if sensors else 'none')
 
     # 无可用数据源时返回空结果
     if not realtime_data:
@@ -66,16 +97,20 @@ def overview(request):
     offline_devices = max(total_devices - online_devices, 0)
 
     if total_devices == 0:
-        total_devices, online_devices, offline_devices = _get_device_counts_from_snapshots(hours)
-    if total_devices == 0:
-        total_devices, online_devices, offline_devices = _get_device_counts_from_history(hours)
+        total_devices, online_devices, offline_devices = _get_device_counts_from_history(
+            hours,
+            manual_mode=manual_mode
+        )
 
     # 获取告警统计
     time_threshold = timezone.now() - timedelta(hours=hours)
-    alert_count = Alert.objects.filter(created_at__gte=time_threshold, resolved=False).count()
+    alert_qs = Alert.objects.filter(created_at__gte=time_threshold, resolved=False)
+    if manual_mode:
+        alert_qs = alert_qs.filter(data_source='manual')
+    alert_count = alert_qs.count()
 
     # 如果数据库没有告警，从数据源获取
-    if alert_count == 0:
+    if alert_count == 0 and not manual_mode:
         raw_alerts = []
         for preferred in get_data_source_priority():
             if preferred == 'national' and NationalWaterDataService.enabled():
@@ -88,17 +123,20 @@ def overview(request):
 
     # 格式化告警数据
     alerts = []
-    for preferred in get_data_source_priority():
-        if preferred == 'national' and NationalWaterDataService.enabled():
-            raw_alerts = NationalWaterDataService.get_alerts(count=5)
-            alerts = [DataTransformer.transform_alert(a, 'national') for a in raw_alerts]
-            break
-        if preferred == 'open' and OpenWaterDataService.enabled():
-            raw_alerts = OpenWaterDataService.get_alerts(count=5)
-            alerts = [DataTransformer.transform_alert(a, 'open') for a in raw_alerts]
-            break
+    if manual_mode:
+        alerts = list(Alert.objects.filter(data_source='manual').order_by('-created_at')[:5].values())
     else:
-        alerts = []
+        for preferred in get_data_source_priority():
+            if preferred == 'national' and NationalWaterDataService.enabled():
+                raw_alerts = NationalWaterDataService.get_alerts(count=5)
+                alerts = [DataTransformer.transform_alert(a, 'national') for a in raw_alerts]
+                break
+            if preferred == 'open' and OpenWaterDataService.enabled():
+                raw_alerts = OpenWaterDataService.get_alerts(count=5)
+                alerts = [DataTransformer.transform_alert(a, 'open') for a in raw_alerts]
+                break
+        else:
+            alerts = []
 
     # 计算水质分布
     water_quality_dist = {}
@@ -150,38 +188,43 @@ def statistics(request):
     """获取详细统计数据"""
     hours = int(request.query_params.get('hours', 24))
     time_threshold = timezone.now() - timedelta(hours=hours)
+    manual_mode = get_data_source_mode() == 'manual'
 
     # 设备统计
-    total_devices, online_devices, offline_devices = _get_device_counts_from_snapshots(hours)
-    if total_devices == 0:
-        total_devices, online_devices, offline_devices = _get_device_counts_from_history(hours)
+    total_devices, online_devices, offline_devices = _get_device_counts_from_history(
+        hours,
+        manual_mode=manual_mode
+    )
     error_devices = 0
 
     # 告警统计
-    total_alerts = Alert.objects.filter(created_at__gte=time_threshold).count()
-    resolved_alerts = Alert.objects.filter(
-        created_at__gte=time_threshold,
-        resolved=True
-    ).count()
+    alerts_qs = Alert.objects.filter(created_at__gte=time_threshold)
+    if manual_mode:
+        alerts_qs = alerts_qs.filter(data_source='manual')
+    total_alerts = alerts_qs.count()
+    resolved_alerts = alerts_qs.filter(resolved=True).count()
     pending_alerts = total_alerts - resolved_alerts
 
     # 按级别统计告警
-    critical_alerts = Alert.objects.filter(
+    critical_alerts = alerts_qs.filter(
         created_at__gte=time_threshold,
         alert_level='critical',
         resolved=False
     ).count()
-    warning_alerts = Alert.objects.filter(
+    warning_alerts = alerts_qs.filter(
         created_at__gte=time_threshold,
         alert_level='warning',
         resolved=False
     ).count()
 
     # 数据统计
-    data_count = SensorData.objects.filter(recorded_at__gte=time_threshold).count()
+    data_qs = (ManualSensorData.objects if manual_mode else SensorData.objects).filter(
+        recorded_at__gte=time_threshold
+    )
+    data_count = data_qs.count()
 
     # 水质统计
-    sensor_data_qs = SensorData.objects.filter(
+    sensor_data_qs = (ManualSensorData.objects if manual_mode else SensorData.objects).filter(
         recorded_at__gte=time_threshold,
         water_quality__isnull=False
     )
@@ -194,9 +237,10 @@ def statistics(request):
             quality_distribution[quality] = count
 
     # 使用数据库数据计算平均值
-    recent_data = SensorData.objects.filter(
+    recent_data = (ManualSensorData.objects if manual_mode else SensorData.objects).filter(
         recorded_at__gte=time_threshold
-    ).aggregate(
+    )
+    recent_data = recent_data.aggregate(
         avg_temp=Avg('temperature'),
         avg_do=Avg('dissolved_oxygen'),
         avg_ph=Avg('ph')
@@ -321,18 +365,6 @@ def _call_bigmodel(api_key, model, question, context):
     return message.get('content', '').strip()
 
 
-def _get_device_counts_from_snapshots(hours):
-    snapshot_threshold = timezone.now() - timedelta(hours=hours)
-    snapshots = SensorDataSnapshot.objects.filter(snapshot_time__gte=snapshot_threshold)
-    if not snapshots.exists():
-        return 0, 0, 0
-    total = snapshots.values('device_id').distinct().count()
-    online_threshold = timezone.now() - timedelta(hours=1)
-    online = snapshots.filter(snapshot_time__gte=online_threshold).values('device_id').distinct().count()
-    offline = max(total - online, 0)
-    return total, online, offline
-
-
 @api_view(['GET', 'POST'])
 def data_source_settings(request):
     if request.method == 'POST':
@@ -356,9 +388,11 @@ def data_source_settings(request):
     })
 
 
-def _get_device_counts_from_history(hours):
+def _get_device_counts_from_history(hours, manual_mode=False):
     time_threshold = timezone.now() - timedelta(hours=hours)
-    data_qs = SensorData.objects.filter(recorded_at__gte=time_threshold)
+    data_qs = (ManualSensorData.objects if manual_mode else SensorData.objects).filter(
+        recorded_at__gte=time_threshold
+    )
     if not data_qs.exists():
         return 0, 0, 0
     total = data_qs.values('device_id').distinct().count()

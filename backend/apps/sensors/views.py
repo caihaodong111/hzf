@@ -8,12 +8,11 @@ from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.utils import timezone
-from django.utils.dateparse import parse_datetime
 from datetime import timedelta
 from django.db.models import Avg, Count, Q, F, Max
 from django.db.models.functions import Coalesce
 
-from .models import SensorData, SensorDataSnapshot, Alert
+from .models import ManualSensorData, SensorData, Alert
 from .serializers import (
     SensorDataSerializer, RealtimeDataSerializer,
     HistoricalDataSerializer, AlertSerializer, DashboardSummarySerializer
@@ -21,7 +20,8 @@ from .serializers import (
 from core.open_data_provider import OpenWaterDataService
 from core.national_water_data import NationalWaterDataService
 from core.data_transformer import DataTransformer
-from core.data_source_preference import get_data_source_priority
+from core.data_source_preference import get_data_source_priority, get_data_source_mode
+from core.realtime_store import sync_realtime_data
 from core.city_matcher import matches_city
 from core.city_resolver import infer_city_name, resolve_area_name
 
@@ -36,9 +36,12 @@ def _compute_data_version(sensors):
         ),
     )
     for sensor in ordered:
+        timestamp = sensor.get("timestamp")
+        if not isinstance(timestamp, str):
+            timestamp = str(timestamp or "")
         parts = [
             sensor.get("device_id") or "",
-            sensor.get("timestamp") or "",
+            timestamp or "",
             sensor.get("water_quality") or "",
             str(sensor.get("temperature") or ""),
             str(sensor.get("ph") or ""),
@@ -77,217 +80,96 @@ class SensorDataViewSet(viewsets.ReadOnlyModelViewSet):
         search_name = request.query_params.get('search_name', '')
         city_name = request.query_params.get('city_name', '')  # 添加城市参数
         last_version = request.query_params.get('last_version', '')
-        force_refresh_param = request.query_params.get('force_refresh', '')
-        force_refresh = str(force_refresh_param).lower() in {"1", "true", "yes"}
+        manual_mode = get_data_source_mode() == 'manual'
+        base_queryset = ManualSensorData.objects.all() if manual_mode else SensorData.objects.all()
 
-        raw_data = []
-        source = None
-        total = 0
-
-        for preferred in get_data_source_priority():
-            if preferred == 'national' and NationalWaterDataService.enabled():
-                result = NationalWaterDataService.get_realtime(
-                    count=count,
-                    area_id=area_id,
-                    river_id=river_id,
-                    search_name=search_name,
-                    city_name=city_name,  # 传递城市参数
-                    force_refresh=force_refresh
+        if search_name:
+            base_queryset = base_queryset.filter(device_name__icontains=search_name)
+        area_name = resolve_area_name(area_id)
+        if area_name:
+            if area_id.endswith("0000"):
+                base_queryset = base_queryset.filter(province__icontains=area_name)
+            else:
+                base_queryset = base_queryset.filter(
+                    Q(city__icontains=area_name) |
+                    Q(location__icontains=area_name) |
+                    Q(device_name__icontains=area_name) |
+                    Q(province__icontains=area_name)
                 )
-                raw_data = result.get("sensors", [])
-                if raw_data:
-                    source = 'national'
-                    total = result.get("total", len(raw_data))
-                    break
-            if preferred == 'open' and OpenWaterDataService.enabled():
-                result = OpenWaterDataService.get_realtime(
-                    count=count,
-                    area_id=area_id,
-                    city_name=city_name
-                )
-                raw_data = result.get("sensors", [])
-                if raw_data:
-                    source = 'open'
-                    total = len(raw_data)
-                    break
+        if river_id:
+            base_queryset = base_queryset.filter(river_basin__icontains=river_id)
 
-        # 最后使用数据库快照数据作为备用
-        if not raw_data:
-            # 获取最近24小时的快照数据
-            time_threshold = timezone.now() - timedelta(hours=24)
-            snapshots = SensorDataSnapshot.objects.filter(
-                snapshot_time__gte=time_threshold
-            ).order_by('-snapshot_time')
+        latest_records = base_queryset.exclude(device_id__isnull=True).values('device_id').annotate(
+            latest_time=Max('recorded_at')
+        ).order_by('-latest_time')
 
-            # 应用筛选条件
-            if search_name:
-                snapshots = snapshots.filter(device_name__icontains=search_name)
-            area_name = resolve_area_name(area_id)
-            if area_name:
-                if area_id.endswith("0000"):
-                    snapshots = snapshots.filter(province__icontains=area_name)
-                else:
-                    snapshots = snapshots.filter(
-                        Q(city__icontains=area_name) |
-                        Q(location__icontains=area_name) |
-                        Q(device_name__icontains=area_name) |
-                        Q(province__icontains=area_name)
-                    )
-            if city_name:
-                snapshots = snapshots.filter(
-                    Q(city__icontains=city_name) |
-                    Q(location__icontains=city_name) |
-                    Q(device_name__icontains=city_name)
-                )
-
-            # 按设备分组，取每个设备的最新数据
-            latest_snapshots = snapshots.values('device_id').annotate(
-                latest_time=Max('snapshot_time')
-            )
-
-            sensors_data = []
-            for item in latest_snapshots[:count]:
-                snapshot = SensorDataSnapshot.objects.filter(
-                    device_id=item['device_id'],
-                    snapshot_time=item['latest_time']
-                ).first()
-
-                if snapshot:
-                    sensors_data.append({
-                        'device_id': snapshot.device_id,
-                        'device_name': snapshot.device_name,
-                        'province': snapshot.province or '',
-                        'city': snapshot.city or '',  # 添加city字段
-                        'river_basin': snapshot.river_basin or '',
-                        'water_quality': snapshot.water_quality or '',
-                        'timestamp': snapshot.snapshot_time.isoformat(),
-                        'temperature': float(snapshot.temperature) if snapshot.temperature else None,
-                        'ph': float(snapshot.ph) if snapshot.ph else None,
-                        'dissolved_oxygen': float(snapshot.dissolved_oxygen) if snapshot.dissolved_oxygen else None,
-                        'conductivity': float(snapshot.conductivity) if snapshot.conductivity else None,
-                        'turbidity': float(snapshot.turbidity) if snapshot.turbidity else None,
-                        'permanganate': float(snapshot.permanganate) if snapshot.permanganate else None,
-                        'ammonia_nitrogen': float(snapshot.ammonia_nitrogen) if snapshot.ammonia_nitrogen else None,
-                        'total_phosphorus': float(snapshot.total_phosphorus) if snapshot.total_phosphorus else None,
-                        'total_nitrogen': float(snapshot.total_nitrogen) if snapshot.total_nitrogen else None,
-                        'chlorophyll_a': float(snapshot.chlorophyll_a) if snapshot.chlorophyll_a else None,
-                        'algae_density': float(snapshot.algae_density) if snapshot.algae_density else None,
-                    })
-
-            raw_data = sensors_data
-            source = 'database'
-            total = len(latest_snapshots)
-
-        # 通过数据转换层统一格式
         sensors = []
-        for item in raw_data:
-            transformed = DataTransformer.transform_realtime_data(item, source)
+        latest_time = None
+        for item in latest_records:
+            record = base_queryset.filter(
+                device_id=item['device_id'],
+                recorded_at=item['latest_time']
+            ).first()
+            if not record:
+                continue
+            if not latest_time or record.recorded_at > latest_time:
+                latest_time = record.recorded_at
+            transformed = DataTransformer.transform_realtime_data({
+                'device_id': record.device_id,
+                'device_name': record.device_name,
+                'location': record.location,
+                'province': record.province,
+                'city': record.city,
+                'river_basin': record.river_basin,
+                'water_quality': record.water_quality,
+                'temperature': record.temperature,
+                'ph': record.ph,
+                'dissolved_oxygen': record.dissolved_oxygen,
+                'conductivity': record.conductivity,
+                'turbidity': record.turbidity,
+                'salinity': record.salinity,
+                'permanganate': record.permanganate,
+                'ammonia_nitrogen': record.ammonia_nitrogen,
+                'total_phosphorus': record.total_phosphorus,
+                'total_nitrogen': record.total_nitrogen,
+                'chlorophyll_a': record.chlorophyll_a,
+                'algae_density': record.algae_density,
+                'recorded_at': record.recorded_at,
+            }, 'database')
             if not transformed.get("city"):
                 transformed["city"] = infer_city_name(
                     (transformed.get("device_name"), transformed.get("location")),
                     transformed.get("province") or "",
                     transformed.get("device_id") or ""
                 )
+            transformed["data_source"] = "manual" if manual_mode else (record.data_source or "auto")
+            transformed["_recorded_at"] = record.recorded_at
             sensors.append(transformed)
 
-        # 写入实时数据表与快照表，确保趋势数据可用（不使用模拟数据）
-        if source in {'national', 'open'} and sensors:
-            device_ids = [s.get('device_id') for s in sensors if s.get('device_id')]
-            latest_by_device = {}
-            if device_ids:
-                latest_by_device = {
-                    row['device_id']: row['last_time']
-                    for row in SensorData.objects.filter(device_id__in=device_ids)
-                    .values('device_id')
-                    .annotate(last_time=Max('recorded_at'))
-                }
-
-            to_create = []
-            for sensor in sensors:
-                device_id = sensor.get('device_id')
-                ts_raw = sensor.get('timestamp')
-                if not device_id or not ts_raw:
-                    continue
-                ts = parse_datetime(ts_raw) if isinstance(ts_raw, str) else ts_raw
-                if ts and timezone.is_naive(ts):
-                    ts = timezone.make_aware(ts, timezone.get_current_timezone())
-                if not ts:
-                    continue
-                last_time = latest_by_device.get(device_id)
-                if last_time and ts <= last_time:
-                    continue
-                to_create.append(SensorData(
-                    device_id=device_id,
-                    device_name=sensor.get('device_name') or '',
-                    temperature=sensor.get('temperature'),
-                    ph=sensor.get('ph'),
-                    dissolved_oxygen=sensor.get('dissolved_oxygen'),
-                    conductivity=sensor.get('conductivity'),
-                    turbidity=sensor.get('turbidity'),
-                    salinity=sensor.get('salinity'),
-                    water_quality=sensor.get('water_quality'),
-                    permanganate=sensor.get('permanganate'),
-                    ammonia_nitrogen=sensor.get('ammonia_nitrogen'),
-                    total_phosphorus=sensor.get('total_phosphorus'),
-                    total_nitrogen=sensor.get('total_nitrogen'),
-                    chlorophyll_a=sensor.get('chlorophyll_a'),
-                    algae_density=sensor.get('algae_density'),
-                    data_source=source,
-                    recorded_at=ts,
-                ))
-            if to_create:
-                SensorData.objects.bulk_create(to_create, batch_size=200)
-
-            snapshot_time = timezone.now().replace(second=0, microsecond=0)
-            snapshots_to_create = []
-            for sensor in sensors:
-                device_id = sensor.get('device_id')
-                if not device_id:
-                    continue
-                snapshots_to_create.append(SensorDataSnapshot(
-                    device_id=device_id,
-                    device_name=sensor.get('device_name') or '',
-                    location=sensor.get('location') or '',
-                    province=sensor.get('province') or '',
-                    city=sensor.get('city') or '',
-                    river_basin=sensor.get('river_basin') or '',
-                    temperature=sensor.get('temperature'),
-                    ph=sensor.get('ph'),
-                    dissolved_oxygen=sensor.get('dissolved_oxygen'),
-                    conductivity=sensor.get('conductivity'),
-                    turbidity=sensor.get('turbidity'),
-                    salinity=sensor.get('salinity'),
-                    water_quality=sensor.get('water_quality'),
-                    permanganate=sensor.get('permanganate'),
-                    ammonia_nitrogen=sensor.get('ammonia_nitrogen'),
-                    total_phosphorus=sensor.get('total_phosphorus'),
-                    total_nitrogen=sensor.get('total_nitrogen'),
-                    chlorophyll_a=sensor.get('chlorophyll_a'),
-                    algae_density=sensor.get('algae_density'),
-                    data_source=source,
-                    snapshot_time=snapshot_time,
-                ))
-            if snapshots_to_create:
-                SensorDataSnapshot.objects.bulk_create(snapshots_to_create, batch_size=200, ignore_conflicts=True)
-
-        if source == 'database':
-            filter_city = city_name
-            if not filter_city and area_id and not area_id.endswith("0000"):
-                filter_city = resolve_area_name(area_id)
-            if filter_city:
-                sensors = [
-                    sensor for sensor in sensors
-                    if matches_city(
-                        filter_city,
-                        (
-                            sensor.get("location"),
-                            sensor.get("device_name"),
-                            sensor.get("city"),
-                            sensor.get("province"),
-                        )
+        if city_name:
+            sensors = [
+                sensor for sensor in sensors
+                if matches_city(
+                    city_name,
+                    (
+                        sensor.get("location"),
+                        sensor.get("device_name"),
+                        sensor.get("city"),
+                        sensor.get("province"),
                     )
-                ]
-                total = len(sensors)
+                )
+            ]
+
+        total = len(sensors)
+        sensors = sensors[:count]
+        if sensors:
+            latest_time = max(
+                (sensor.get("_recorded_at") for sensor in sensors if sensor.get("_recorded_at")),
+                default=latest_time
+            )
+        for sensor in sensors:
+            if "_recorded_at" in sensor:
+                sensor.pop("_recorded_at")
 
         data_version = _compute_data_version(sensors)
         changed = not last_version or last_version != data_version
@@ -299,105 +181,65 @@ class SensorDataViewSet(viewsets.ReadOnlyModelViewSet):
             'data': {
                 'sensors': response_sensors,
                 'total': total,
-                'timestamp': timezone.now().isoformat(),
+                'timestamp': (latest_time or timezone.now()).isoformat(),
                 'data_version': data_version,
                 'changed': changed
             }
         })
 
+    @action(detail=False, methods=['post'])
+    def sync_realtime(self, request):
+        """手动触发实时数据入库"""
+        payload = request.data or {}
+        source = (payload.get('source') or '').strip().lower() or None
+        count = int(payload.get('count') or 1000)
+        result = sync_realtime_data(source=source, count=count, manual=True)
+        return Response({
+            'code': 200,
+            'message': 'success',
+            'data': result
+        })
+
     @action(detail=False, methods=['get'])
     def history(self, request):
-        """获取历史数据 - 从数据库快照中读取"""
-        from apps.sensors.models import SensorDataSnapshot
-
+        """获取历史数据 - 从数据库历史表中读取"""
         device_id = request.query_params.get('device_id')
         hours = int(request.query_params.get('hours', 24))
 
-        # 计算时间范围
-        from datetime import timedelta
         time_threshold = timezone.now() - timedelta(hours=hours)
 
-        # 优先从数据库快照读取
-        snapshots = SensorDataSnapshot.objects.filter(
-            snapshot_time__gte=time_threshold
-        ).order_by('snapshot_time')
-
-        # 如果指定了设备ID，过滤该设备的数据
+        manual_mode = get_data_source_mode() == 'manual'
+        target_model = ManualSensorData if manual_mode else SensorData
+        sensor_qs = target_model.objects.filter(recorded_at__gte=time_threshold).order_by('recorded_at')
         if device_id:
-            snapshots = snapshots.filter(device_id=device_id)
+            sensor_qs = sensor_qs.filter(device_id=device_id)
         else:
-            # 如果没有指定设备ID，获取第一个有数据的设备
-            first_snapshot = snapshots.first()
-            if first_snapshot:
-                device_id = first_snapshot.device_id
-                snapshots = snapshots.filter(device_id=device_id)
+            first_record = sensor_qs.first()
+            if first_record:
+                device_id = first_record.device_id
+                sensor_qs = sensor_qs.filter(device_id=device_id)
 
-        # 转换为历史数据格式
         history_data = []
-        for snapshot in snapshots:
-            # 格式化时间标签
+        for record in sensor_qs:
             if hours <= 24:
-                time_label = snapshot.snapshot_time.strftime('%H:%M')
+                time_label = record.recorded_at.strftime('%H:%M')
             else:
-                time_label = snapshot.snapshot_time.strftime('%m-%d')
+                time_label = record.recorded_at.strftime('%m-%d')
 
             history_data.append({
                 'time': time_label,
-                'timestamp': snapshot.snapshot_time.isoformat(),
-                'temperature': float(snapshot.temperature) if snapshot.temperature is not None else None,
-                'ph': float(snapshot.ph) if snapshot.ph is not None else None,
-                'dissolved_oxygen': float(snapshot.dissolved_oxygen) if snapshot.dissolved_oxygen is not None else None,
-                'conductivity': float(snapshot.conductivity) if snapshot.conductivity is not None else None,
-                'turbidity': float(snapshot.turbidity) if snapshot.turbidity is not None else None,
+                'timestamp': record.recorded_at.isoformat(),
+                'temperature': float(record.temperature) if record.temperature is not None else None,
+                'ph': float(record.ph) if record.ph is not None else None,
+                'dissolved_oxygen': float(record.dissolved_oxygen) if record.dissolved_oxygen is not None else None,
+                'conductivity': float(record.conductivity) if record.conductivity is not None else None,
+                'turbidity': float(record.turbidity) if record.turbidity is not None else None,
             })
 
-        data_source = 'database' if history_data else None
-
-        # 快照无数据时，回退到实时数据表（仍为真实数据）
-        if not history_data:
-            sensor_qs = SensorData.objects.filter(recorded_at__gte=time_threshold).order_by('recorded_at')
-            if device_id:
-                sensor_qs = sensor_qs.filter(device_id=device_id)
-            else:
-                first_record = sensor_qs.first()
-                if first_record:
-                    device_id = first_record.device_id
-                    sensor_qs = sensor_qs.filter(device_id=device_id)
-
-            for record in sensor_qs:
-                if hours <= 24:
-                    time_label = record.recorded_at.strftime('%H:%M')
-                else:
-                    time_label = record.recorded_at.strftime('%m-%d')
-
-                history_data.append({
-                    'time': time_label,
-                    'timestamp': record.recorded_at.isoformat(),
-                    'temperature': float(record.temperature) if record.temperature is not None else None,
-                    'ph': float(record.ph) if record.ph is not None else None,
-                    'dissolved_oxygen': float(record.dissolved_oxygen) if record.dissolved_oxygen is not None else None,
-                    'conductivity': float(record.conductivity) if record.conductivity is not None else None,
-                    'turbidity': float(record.turbidity) if record.turbidity is not None else None,
-                })
-
-            if history_data:
-                data_source = 'database'
-
-        # 数据库也无历史时，回退到真实数据源历史接口
-        if not history_data and device_id:
-            for preferred in get_data_source_priority():
-                if preferred == 'national' and NationalWaterDataService.enabled():
-                    history_data = NationalWaterDataService.get_history(device_id=device_id, hours=hours)
-                    if history_data:
-                        data_source = 'national'
-                        break
-                if preferred == 'open' and OpenWaterDataService.enabled():
-                    history_data = OpenWaterDataService.get_history(device_id=device_id, hours=hours)
-                    if history_data:
-                        data_source = 'open'
-                        break
-
-        data_source = data_source or 'none'
+        if manual_mode and history_data:
+            data_source = 'manual'
+        else:
+            data_source = 'auto' if history_data else 'none'
 
         return Response({
             'code': 200,
@@ -441,27 +283,32 @@ class AlertViewSet(viewsets.ModelViewSet):
         count = int(request.query_params.get('count', 50))
         alerts = []
         source = None
+        manual_mode = get_data_source_mode() == 'manual'
 
-        for preferred in get_data_source_priority():
-            if preferred == 'national' and NationalWaterDataService.enabled():
-                raw_alerts = NationalWaterDataService.get_alerts(count=count)
-                if raw_alerts:
-                    alerts = [DataTransformer.transform_alert(a, 'national') for a in raw_alerts]
-                    source = 'national'
-                    break
-            if preferred == 'open' and OpenWaterDataService.enabled():
-                raw_alerts = OpenWaterDataService.get_alerts(count=count)
-                if raw_alerts:
-                    alerts = [DataTransformer.transform_alert(a, 'open') for a in raw_alerts]
-                    source = 'open'
-                    break
+        if not manual_mode:
+            for preferred in get_data_source_priority():
+                if preferred == 'national' and NationalWaterDataService.enabled():
+                    raw_alerts = NationalWaterDataService.get_alerts(count=count)
+                    if raw_alerts:
+                        alerts = [DataTransformer.transform_alert(a, 'national') for a in raw_alerts]
+                        source = 'national'
+                        break
+                if preferred == 'open' and OpenWaterDataService.enabled():
+                    raw_alerts = OpenWaterDataService.get_alerts(count=count)
+                    if raw_alerts:
+                        alerts = [DataTransformer.transform_alert(a, 'open') for a in raw_alerts]
+                        source = 'open'
+                        break
 
         # 最后使用数据库数据
         if not alerts:
-            queryset = self.get_queryset()[:count]
+            queryset = self.get_queryset()
+            if manual_mode:
+                queryset = queryset.filter(data_source='manual')
+            queryset = queryset[:count]
             serializer = self.get_serializer(queryset, many=True)
             alerts = serializer.data
-            source = 'database'
+            source = 'manual' if manual_mode else 'database'
 
         if not alerts:
             source = source or 'none'
@@ -504,6 +351,8 @@ class AlertViewSet(viewsets.ModelViewSet):
         time_threshold = timezone.now() - timedelta(hours=hours)
 
         queryset = Alert.objects.filter(created_at__gte=time_threshold)
+        if get_data_source_mode() == 'manual':
+            queryset = queryset.filter(data_source='manual')
 
         total = queryset.count()
         resolved_count = queryset.filter(resolved=True).count()

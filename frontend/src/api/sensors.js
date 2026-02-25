@@ -68,3 +68,19 @@ export function getDashboardStatistics(hours = 24) {
     params: { hours }
   })
 }
+
+/**
+ * 手动触发实时数据入库
+ * @param {string} source - 指定数据源
+ * @param {number} count - 拉取数量
+ */
+export function syncRealtimeData(source = '', count = 1000) {
+  return request({
+    url: '/sensors/data/sync_realtime/',
+    method: 'post',
+    data: {
+      source,
+      count
+    }
+  })
+}

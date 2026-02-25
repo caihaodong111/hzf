@@ -9,6 +9,10 @@ class SensorData(models.Model):
     """传感器数据模型 - 统一多数据源的水质监测数据"""
     device_id = models.CharField(max_length=50, db_index=True, verbose_name='设备ID', blank=True, null=True)
     device_name = models.CharField(max_length=100, blank=True, null=True, verbose_name='设备名称/断面名称')
+    location = models.CharField(max_length=200, blank=True, null=True, verbose_name='位置')
+    province = models.CharField(max_length=50, blank=True, null=True, verbose_name='省份')
+    city = models.CharField(max_length=50, blank=True, null=True, verbose_name='城市')
+    river_basin = models.CharField(max_length=50, blank=True, null=True, verbose_name='流域')
 
     # 基础水质参数
     temperature = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True,
@@ -70,6 +74,9 @@ class SensorData(models.Model):
             models.Index(fields=['recorded_at']),
             models.Index(fields=['data_source']),
             models.Index(fields=['water_quality']),
+            models.Index(fields=['province'], name='sensor_data_province_idx'),
+            models.Index(fields=['city'], name='sensor_data_city_idx'),
+            models.Index(fields=['river_basin'], name='sensor_data_river_idx'),
         ]
 
     def __str__(self):
@@ -91,81 +98,60 @@ class SensorData(models.Model):
         return self.water_quality in ['Ⅳ', 'Ⅴ', '劣Ⅴ']
 
 
-class SensorDataSnapshot(models.Model):
-    """传感器数据快照 - 用于存储历史趋势数据
-
-    定期（如每小时）从数据源获取所有站点的最新数据并保存为快照，
-    这样就能查询任意时间段的历史趋势了。
-    """
-    snapshot_id = models.BigAutoField(primary_key=True)
-
-    # 设备基本信息
-    device_id = models.CharField(max_length=50, db_index=True, verbose_name='设备ID')
-    device_name = models.CharField(max_length=100, blank=True, null=True, verbose_name='设备名称')
+class ManualSensorData(models.Model):
+    """手动更新数据表 - 仅存放手动获取的历史明细"""
+    device_id = models.CharField(max_length=50, db_index=True, verbose_name='设备ID', blank=True, null=True)
+    device_name = models.CharField(max_length=100, blank=True, null=True, verbose_name='设备名称/断面名称')
     location = models.CharField(max_length=200, blank=True, null=True, verbose_name='位置')
     province = models.CharField(max_length=50, blank=True, null=True, verbose_name='省份')
     city = models.CharField(max_length=50, blank=True, null=True, verbose_name='城市')
     river_basin = models.CharField(max_length=50, blank=True, null=True, verbose_name='流域')
 
-    # 水质参数
     temperature = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True,
-                                     verbose_name='水温(°C)')
-    ph = models.DecimalField(max_digits=4, decimal_places=2, null=True, blank=True,
-                           verbose_name='pH值')
+                                      verbose_name='水温(℃)')
+    ph = models.DecimalField(max_digits=4, decimal_places=2, null=True, blank=True, verbose_name='pH值')
     dissolved_oxygen = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True,
-                                         verbose_name='溶解氧(mg/L)')
+                                           verbose_name='溶解氧(mg/L)')
     conductivity = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True,
-                                      verbose_name='电导率(μS/cm)')
+                                        verbose_name='电导率(μS/cm)')
     turbidity = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True,
-                                   verbose_name='浊度(NTU)')
+                                     verbose_name='浊度(NTU)')
     salinity = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True,
-                                  verbose_name='盐度(‰)')
-
-    # 综合水质评价
+                                    verbose_name='盐度(‰)')
     water_quality = models.CharField(max_length=10, blank=True, null=True,
-                                    verbose_name='水质类别')
-
-    # 扩展水质参数
+                                     verbose_name='水质类别')
     permanganate = models.DecimalField(max_digits=6, decimal_places=3, null=True, blank=True,
-                                      verbose_name='高锰酸盐指数(mg/L)')
+                                        verbose_name='高锰酸盐指数(mg/L)')
     ammonia_nitrogen = models.DecimalField(max_digits=6, decimal_places=3, null=True, blank=True,
-                                         verbose_name='氨氮(mg/L)')
+                                           verbose_name='氨氮(mg/L)')
     total_phosphorus = models.DecimalField(max_digits=6, decimal_places=3, null=True, blank=True,
-                                          verbose_name='总磷(mg/L)')
+                                           verbose_name='总磷(mg/L)')
     total_nitrogen = models.DecimalField(max_digits=6, decimal_places=3, null=True, blank=True,
-                                        verbose_name='总氮(mg/L)')
+                                         verbose_name='总氮(mg/L)')
     chlorophyll_a = models.DecimalField(max_digits=6, decimal_places=3, null=True, blank=True,
-                                      verbose_name='叶绿素a(mg/L)')
+                                        verbose_name='叶绿素a(mg/L)')
     algae_density = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True,
-                                      verbose_name='藻密度(cells/L)')
+                                        verbose_name='藻密度(cells/L)')
 
-    # 数据来源和快照时间
-    data_source = models.CharField(max_length=50, blank=True, null=True,
-                                  verbose_name='数据来源')
-    snapshot_time = models.DateTimeField(db_index=True, verbose_name='快照时间')
-    created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
+    recorded_at = models.DateTimeField(db_index=True, verbose_name='监测时间')
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='入库时间')
 
     class Meta:
-        db_table = 'sensor_data_snapshot'
-        verbose_name = '传感器数据快照'
-        verbose_name_plural = '传感器数据快照'
-        ordering = ['-snapshot_time']
+        db_table = 'manual_sensor_data'
+        verbose_name = '手动更新数据'
+        verbose_name_plural = '手动更新数据'
+        ordering = ['-recorded_at']
         indexes = [
-            models.Index(fields=['device_id', '-snapshot_time']),
-            models.Index(fields=['snapshot_time']),
-            models.Index(fields=['data_source']),
-            models.Index(fields=['device_id', 'snapshot_time']),
-        ]
-        # 为每个设备的快照时间添加唯一约束，避免同一时刻重复快照
-        constraints = [
-            models.UniqueConstraint(
-                fields=['device_id', 'snapshot_time'],
-                name='unique_device_snapshot_time'
-            )
+            models.Index(fields=['device_id', '-recorded_at'], name='manual_data_device_time_idx'),
+            models.Index(fields=['recorded_at']),
+            models.Index(fields=['water_quality']),
+            models.Index(fields=['province'], name='manual_data_province_idx'),
+            models.Index(fields=['city'], name='manual_data_city_idx'),
+            models.Index(fields=['river_basin'], name='manual_data_river_idx'),
         ]
 
     def __str__(self):
-        return f"{self.device_id} - {self.snapshot_time.strftime('%Y-%m-%d %H:%M')}"
+        return f"{self.device_id} - {self.recorded_at}"
 
 
 class Alert(models.Model):
@@ -234,3 +220,4 @@ class Alert(models.Model):
         self.resolved = True
         self.resolved_at = timezone.now()
         self.save()
+

@@ -139,12 +139,14 @@
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import * as echarts from 'echarts'
 import { getDashboardOverview, getRealtimeData, getHistoricalData } from '@/api/sensors'
+import { getDataSourceSettings } from '@/api/settings'
 import sensorStore from '@/stores/sensorStore'
 import { Refresh, Search } from '@element-plus/icons-vue'
 
 const timeRange = ref(24)
 const loading = ref(false)
 const overview = ref({})
+const dataSourceMode = ref('auto')
 const sensors = ref([])
 const dataSource = ref('-')
 const lastUpdate = ref('')
@@ -403,6 +405,15 @@ const loadData = async () => {
   }
 }
 
+const loadDataSourceMode = async () => {
+  try {
+    const res = await getDataSourceSettings()
+    dataSourceMode.value = res?.data?.mode || 'auto'
+  } catch (error) {
+    dataSourceMode.value = 'auto'
+  }
+}
+
 const loadTrend = async () => {
   if (!trendDeviceId.value) {
     trendHistory.value = []
@@ -438,6 +449,10 @@ const applyTrendSearch = () => {
 
 onMounted(async () => {
   await initCharts()
+  await loadDataSourceMode()
+  if (dataSourceMode.value === 'manual') {
+    sensorStore.clearCache()
+  }
   await loadData()
 })
 
