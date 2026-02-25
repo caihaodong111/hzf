@@ -614,9 +614,9 @@ class NationalWaterDataService:
 
         # 格式化时间标签
         def _format_time_label(ts: datetime) -> str:
-            if hours >= 24:
-                return ts.strftime("%m-%d")
-            return ts.strftime("%H:%M")
+            if hours <= 24:
+                return ts.strftime("%H:%M")
+            return ts.strftime("%m-%d")
 
         return [
             {

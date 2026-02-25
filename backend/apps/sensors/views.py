@@ -8,11 +8,12 @@ from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 from datetime import timedelta
-from django.db.models import Avg, Count, Q, F
+from django.db.models import Avg, Count, Q, F, Max
 from django.db.models.functions import Coalesce
 
-from .models import SensorData, Alert
+from .models import SensorData, SensorDataSnapshot, Alert
 from .serializers import (
     SensorDataSerializer, RealtimeDataSerializer,
     HistoricalDataSerializer, AlertSerializer, DashboardSummarySerializer
@@ -111,9 +112,6 @@ class SensorDataViewSet(viewsets.ReadOnlyModelViewSet):
 
         # 最后使用数据库快照数据作为备用
         if not raw_data:
-            from apps.sensors.models import SensorDataSnapshot
-            from datetime import timedelta
-
             # 获取最近24小时的快照数据
             time_threshold = timezone.now() - timedelta(hours=24)
             snapshots = SensorDataSnapshot.objects.filter(
@@ -142,7 +140,6 @@ class SensorDataViewSet(viewsets.ReadOnlyModelViewSet):
                 )
 
             # 按设备分组，取每个设备的最新数据
-            from django.db.models import Max
             latest_snapshots = snapshots.values('device_id').annotate(
                 latest_time=Max('snapshot_time')
             )
@@ -191,6 +188,86 @@ class SensorDataViewSet(viewsets.ReadOnlyModelViewSet):
                     transformed.get("device_id") or ""
                 )
             sensors.append(transformed)
+
+        # 写入实时数据表与快照表，确保趋势数据可用（不使用模拟数据）
+        if source in {'national', 'open'} and sensors:
+            device_ids = [s.get('device_id') for s in sensors if s.get('device_id')]
+            latest_by_device = {}
+            if device_ids:
+                latest_by_device = {
+                    row['device_id']: row['last_time']
+                    for row in SensorData.objects.filter(device_id__in=device_ids)
+                    .values('device_id')
+                    .annotate(last_time=Max('recorded_at'))
+                }
+
+            to_create = []
+            for sensor in sensors:
+                device_id = sensor.get('device_id')
+                ts_raw = sensor.get('timestamp')
+                if not device_id or not ts_raw:
+                    continue
+                ts = parse_datetime(ts_raw) if isinstance(ts_raw, str) else ts_raw
+                if ts and timezone.is_naive(ts):
+                    ts = timezone.make_aware(ts, timezone.get_current_timezone())
+                if not ts:
+                    continue
+                last_time = latest_by_device.get(device_id)
+                if last_time and ts <= last_time:
+                    continue
+                to_create.append(SensorData(
+                    device_id=device_id,
+                    device_name=sensor.get('device_name') or '',
+                    temperature=sensor.get('temperature'),
+                    ph=sensor.get('ph'),
+                    dissolved_oxygen=sensor.get('dissolved_oxygen'),
+                    conductivity=sensor.get('conductivity'),
+                    turbidity=sensor.get('turbidity'),
+                    salinity=sensor.get('salinity'),
+                    water_quality=sensor.get('water_quality'),
+                    permanganate=sensor.get('permanganate'),
+                    ammonia_nitrogen=sensor.get('ammonia_nitrogen'),
+                    total_phosphorus=sensor.get('total_phosphorus'),
+                    total_nitrogen=sensor.get('total_nitrogen'),
+                    chlorophyll_a=sensor.get('chlorophyll_a'),
+                    algae_density=sensor.get('algae_density'),
+                    data_source=source,
+                    recorded_at=ts,
+                ))
+            if to_create:
+                SensorData.objects.bulk_create(to_create, batch_size=200)
+
+            snapshot_time = timezone.now().replace(second=0, microsecond=0)
+            snapshots_to_create = []
+            for sensor in sensors:
+                device_id = sensor.get('device_id')
+                if not device_id:
+                    continue
+                snapshots_to_create.append(SensorDataSnapshot(
+                    device_id=device_id,
+                    device_name=sensor.get('device_name') or '',
+                    location=sensor.get('location') or '',
+                    province=sensor.get('province') or '',
+                    city=sensor.get('city') or '',
+                    river_basin=sensor.get('river_basin') or '',
+                    temperature=sensor.get('temperature'),
+                    ph=sensor.get('ph'),
+                    dissolved_oxygen=sensor.get('dissolved_oxygen'),
+                    conductivity=sensor.get('conductivity'),
+                    turbidity=sensor.get('turbidity'),
+                    salinity=sensor.get('salinity'),
+                    water_quality=sensor.get('water_quality'),
+                    permanganate=sensor.get('permanganate'),
+                    ammonia_nitrogen=sensor.get('ammonia_nitrogen'),
+                    total_phosphorus=sensor.get('total_phosphorus'),
+                    total_nitrogen=sensor.get('total_nitrogen'),
+                    chlorophyll_a=sensor.get('chlorophyll_a'),
+                    algae_density=sensor.get('algae_density'),
+                    data_source=source,
+                    snapshot_time=snapshot_time,
+                ))
+            if snapshots_to_create:
+                SensorDataSnapshot.objects.bulk_create(snapshots_to_create, batch_size=200, ignore_conflicts=True)
 
         if source == 'database':
             filter_city = city_name
@@ -258,10 +335,10 @@ class SensorDataViewSet(viewsets.ReadOnlyModelViewSet):
         history_data = []
         for snapshot in snapshots:
             # 格式化时间标签
-            if hours >= 24:
-                time_label = snapshot.snapshot_time.strftime('%m-%d')
-            else:
+            if hours <= 24:
                 time_label = snapshot.snapshot_time.strftime('%H:%M')
+            else:
+                time_label = snapshot.snapshot_time.strftime('%m-%d')
 
             history_data.append({
                 'time': time_label,
@@ -287,10 +364,10 @@ class SensorDataViewSet(viewsets.ReadOnlyModelViewSet):
                     sensor_qs = sensor_qs.filter(device_id=device_id)
 
             for record in sensor_qs:
-                if hours >= 24:
-                    time_label = record.recorded_at.strftime('%m-%d')
-                else:
+                if hours <= 24:
                     time_label = record.recorded_at.strftime('%H:%M')
+                else:
+                    time_label = record.recorded_at.strftime('%m-%d')
 
                 history_data.append({
                     'time': time_label,
