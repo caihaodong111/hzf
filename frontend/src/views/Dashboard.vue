@@ -411,14 +411,17 @@ const loadRealtimeData = async (isAuto = false, forceRefresh = false) => {
     const searchName = filters.value.search
     // 使用缓存store获取数据，筛选时强制刷新
     const res = await sensorStore.getRealtimeData(
-      () => apiGetRealtimeData(
+      (lastVersion) => apiGetRealtimeData(
         100,
         filters.value.province,
         filters.value.river,
         searchName,
-        selectedProvinceChild.value
+        selectedProvinceChild.value,
+        forceRefresh,
+        forceRefresh ? '' : lastVersion
       ),
-      forceRefresh || !isAuto // 筛选或手动刷新时强制更新
+      forceRefresh,
+      { checkUpdate: true }
     )
 
     if (res.code === 200) {

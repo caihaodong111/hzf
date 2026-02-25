@@ -375,7 +375,11 @@ const loadData = async () => {
   try {
     const [overviewRes, realtimeRes] = await Promise.all([
       getDashboardOverview(timeRange.value, 300),
-      sensorStore.getRealtimeData(() => getRealtimeData(300, '', '', '', '', true), false)
+      sensorStore.getRealtimeData(
+        (lastVersion) => getRealtimeData(300, '', '', '', '', false, lastVersion),
+        false,
+        { checkUpdate: true }
+      )
     ])
 
     if (overviewRes?.code === 200) {

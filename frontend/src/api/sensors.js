@@ -8,6 +8,7 @@ import request from './index'
  * @param {string} searchName - 断面名称搜索
  * @param {string} cityName - 城市名称
  * @param {boolean} forceRefresh - 是否强制刷新缓存
+ * @param {string} lastVersion - 上次数据版本
  */
 export function getRealtimeData(
   count = 10,
@@ -15,7 +16,8 @@ export function getRealtimeData(
   riverId = '',
   searchName = '',
   cityName = '',
-  forceRefresh = true
+  forceRefresh = true,
+  lastVersion = ''
 ) {
   return request({
     url: '/sensors/data/realtime/',
@@ -26,7 +28,8 @@ export function getRealtimeData(
       river_id: riverId,
       search_name: searchName,
       city_name: cityName,
-      force_refresh: forceRefresh ? 1 : 0
+      force_refresh: forceRefresh ? 1 : 0,
+      last_version: lastVersion
     }
   })
 }

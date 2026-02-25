@@ -10,6 +10,7 @@ const cache = {
   total: ref(0),
   overview: ref({}),
   timestamp: ref(null),
+  dataVersion: ref(''),
   loading: ref(false)
 }
 
@@ -24,16 +25,20 @@ function isCacheValid() {
 }
 
 // 获取实时数据（带缓存）
-async function getRealtimeData(fetchFn, forceRefresh = false) {
+async function getRealtimeData(fetchFn, forceRefresh = false, options = {}) {
+  const { checkUpdate = false } = options
+  const hasCache = isCacheValid() && cache.sensors.value.length > 0
   // 如果有有效缓存且不强制刷新，直接返回缓存
-  if (!forceRefresh && isCacheValid() && cache.sensors.value.length > 0) {
+  if (!forceRefresh && !checkUpdate && hasCache) {
     return {
       code: 200,
       data: {
         sensors: cache.sensors.value,
         total: cache.total.value,
         timestamp: cache.timestamp.value,
-        fromCache: true
+        fromCache: true,
+        data_version: cache.dataVersion.value,
+        changed: false
       }
     }
   }
@@ -41,11 +46,29 @@ async function getRealtimeData(fetchFn, forceRefresh = false) {
   // 否则请求新数据
   cache.loading.value = true
   try {
-    const result = await fetchFn()
+    const result = await fetchFn(cache.dataVersion.value)
     if (result?.code === 200) {
+      const changed = result.data?.changed !== false
+      const dataVersion = result.data?.data_version || cache.dataVersion.value
+      if (!changed && hasCache) {
+        cache.timestamp.value = Date.now()
+        cache.dataVersion.value = dataVersion
+        return {
+          code: 200,
+          data: {
+            sensors: cache.sensors.value,
+            total: cache.total.value,
+            timestamp: cache.timestamp.value,
+            fromCache: true,
+            data_version: cache.dataVersion.value,
+            changed: false
+          }
+        }
+      }
       cache.sensors.value = result.data?.sensors || []
       cache.total.value = result.data?.total || 0
       cache.timestamp.value = Date.now()
+      cache.dataVersion.value = dataVersion
     }
     return result
   } finally {
@@ -85,6 +108,7 @@ function clearCache() {
   cache.total.value = 0
   cache.overview.value = {}
   cache.timestamp.value = null
+  cache.dataVersion.value = ''
 }
 
 // 导出

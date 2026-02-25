@@ -2,6 +2,8 @@
 传感器数据视图 - 统一多数据源接口
 使用数据转换层确保输出格式一致
 """
+import hashlib
+
 from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -20,6 +22,30 @@ from core.national_water_data import NationalWaterDataService
 from core.data_transformer import DataTransformer
 from core.city_matcher import matches_city
 from core.city_resolver import infer_city_name, resolve_area_name
+
+
+def _compute_data_version(sensors):
+    hasher = hashlib.md5()
+    ordered = sorted(
+        sensors,
+        key=lambda item: (
+            item.get("device_id") or "",
+            str(item.get("timestamp") or "")
+        ),
+    )
+    for sensor in ordered:
+        parts = [
+            sensor.get("device_id") or "",
+            sensor.get("timestamp") or "",
+            sensor.get("water_quality") or "",
+            str(sensor.get("temperature") or ""),
+            str(sensor.get("ph") or ""),
+            str(sensor.get("dissolved_oxygen") or ""),
+        ]
+        hasher.update("|".join(parts).encode("utf-8"))
+        hasher.update(b"\n")
+    return hasher.hexdigest()
+
 
 class SensorDataViewSet(viewsets.ReadOnlyModelViewSet):
     """传感器数据视图集 - 使用数据库模型"""
@@ -48,6 +74,7 @@ class SensorDataViewSet(viewsets.ReadOnlyModelViewSet):
         river_id = request.query_params.get('river_id', '')
         search_name = request.query_params.get('search_name', '')
         city_name = request.query_params.get('city_name', '')  # 添加城市参数
+        last_version = request.query_params.get('last_version', '')
         force_refresh_param = request.query_params.get('force_refresh', '')
         force_refresh = str(force_refresh_param).lower() in {"1", "true", "yes"}
 
@@ -184,13 +211,19 @@ class SensorDataViewSet(viewsets.ReadOnlyModelViewSet):
                 ]
                 total = len(sensors)
 
+        data_version = _compute_data_version(sensors)
+        changed = not last_version or last_version != data_version
+        response_sensors = sensors if changed else []
+
         return Response({
             'code': 200,
             'message': 'success',
             'data': {
-                'sensors': sensors,
+                'sensors': response_sensors,
                 'total': total,
-                'timestamp': timezone.now().isoformat()
+                'timestamp': timezone.now().isoformat(),
+                'data_version': data_version,
+                'changed': changed
             }
         })
 
