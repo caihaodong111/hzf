@@ -165,23 +165,24 @@ class SensorDataViewSet(viewsets.ReadOnlyModelViewSet):
                 )
             sensors.append(transformed)
 
-        filter_city = city_name
-        if not filter_city and area_id and not area_id.endswith("0000"):
-            filter_city = resolve_area_name(area_id)
-        if filter_city:
-            sensors = [
-                sensor for sensor in sensors
-                if matches_city(
-                    filter_city,
-                    (
-                        sensor.get("location"),
-                        sensor.get("device_name"),
-                        sensor.get("city"),
-                        sensor.get("province"),
+        if source == 'database':
+            filter_city = city_name
+            if not filter_city and area_id and not area_id.endswith("0000"):
+                filter_city = resolve_area_name(area_id)
+            if filter_city:
+                sensors = [
+                    sensor for sensor in sensors
+                    if matches_city(
+                        filter_city,
+                        (
+                            sensor.get("location"),
+                            sensor.get("device_name"),
+                            sensor.get("city"),
+                            sensor.get("province"),
+                        )
                     )
-                )
-            ]
-            total = len(sensors)
+                ]
+                total = len(sensors)
 
         return Response({
             'code': 200,
