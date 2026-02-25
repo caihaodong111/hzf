@@ -273,6 +273,33 @@ class SensorDataViewSet(viewsets.ReadOnlyModelViewSet):
                 'turbidity': float(snapshot.turbidity) if snapshot.turbidity is not None else None,
             })
 
+        # 快照无数据时，回退到实时数据表（仍为真实数据）
+        if not history_data:
+            sensor_qs = SensorData.objects.filter(recorded_at__gte=time_threshold).order_by('recorded_at')
+            if device_id:
+                sensor_qs = sensor_qs.filter(device_id=device_id)
+            else:
+                first_record = sensor_qs.first()
+                if first_record:
+                    device_id = first_record.device_id
+                    sensor_qs = sensor_qs.filter(device_id=device_id)
+
+            for record in sensor_qs:
+                if hours >= 24:
+                    time_label = record.recorded_at.strftime('%m-%d')
+                else:
+                    time_label = record.recorded_at.strftime('%H:%M')
+
+                history_data.append({
+                    'time': time_label,
+                    'timestamp': record.recorded_at.isoformat(),
+                    'temperature': float(record.temperature) if record.temperature is not None else None,
+                    'ph': float(record.ph) if record.ph is not None else None,
+                    'dissolved_oxygen': float(record.dissolved_oxygen) if record.dissolved_oxygen is not None else None,
+                    'conductivity': float(record.conductivity) if record.conductivity is not None else None,
+                    'turbidity': float(record.turbidity) if record.turbidity is not None else None,
+                })
+
         data_source = 'database' if history_data else 'none'
 
         return Response({
