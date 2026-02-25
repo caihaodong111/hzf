@@ -27,9 +27,10 @@ function isCacheValid() {
 // 获取实时数据（带缓存）
 async function getRealtimeData(fetchFn, forceRefresh = false, options = {}) {
   const { checkUpdate = false } = options
-  const hasCache = isCacheValid() && cache.sensors.value.length > 0
+  const hasCacheData = cache.sensors.value.length > 0
+  const cacheValid = isCacheValid()
   // 如果有有效缓存且不强制刷新，直接返回缓存
-  if (!forceRefresh && !checkUpdate && hasCache) {
+  if (!forceRefresh && !checkUpdate && cacheValid && hasCacheData) {
     return {
       code: 200,
       data: {
@@ -50,7 +51,7 @@ async function getRealtimeData(fetchFn, forceRefresh = false, options = {}) {
     if (result?.code === 200) {
       const changed = result.data?.changed !== false
       const dataVersion = result.data?.data_version || cache.dataVersion.value
-      if (!changed && hasCache) {
+      if (!changed && hasCacheData) {
         cache.timestamp.value = Date.now()
         cache.dataVersion.value = dataVersion
         return {

@@ -273,6 +273,8 @@ class SensorDataViewSet(viewsets.ReadOnlyModelViewSet):
                 'turbidity': float(snapshot.turbidity) if snapshot.turbidity is not None else None,
             })
 
+        data_source = 'database' if history_data else None
+
         # 快照无数据时，回退到实时数据表（仍为真实数据）
         if not history_data:
             sensor_qs = SensorData.objects.filter(recorded_at__gte=time_threshold).order_by('recorded_at')
@@ -300,7 +302,21 @@ class SensorDataViewSet(viewsets.ReadOnlyModelViewSet):
                     'turbidity': float(record.turbidity) if record.turbidity is not None else None,
                 })
 
-        data_source = 'database' if history_data else 'none'
+            if history_data:
+                data_source = 'database'
+
+        # 数据库也无历史时，回退到真实数据源历史接口
+        if not history_data and device_id:
+            if NationalWaterDataService.enabled():
+                history_data = NationalWaterDataService.get_history(device_id=device_id, hours=hours)
+                if history_data:
+                    data_source = 'national'
+            if not history_data and OpenWaterDataService.enabled():
+                history_data = OpenWaterDataService.get_history(device_id=device_id, hours=hours)
+                if history_data:
+                    data_source = 'open'
+
+        data_source = data_source or 'none'
 
         return Response({
             'code': 200,
