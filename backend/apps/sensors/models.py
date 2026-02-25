@@ -1,6 +1,6 @@
 """
 传感器数据模型 - 统一数据模型
-支持国家水质自动综合监管平台、开放数据和模拟数据
+支持国家水质自动综合监管平台和开放数据
 """
 from django.db import models
 
@@ -27,7 +27,7 @@ class SensorData(models.Model):
     turbidity = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True,
                                    verbose_name='浊度(NTU)')
 
-    # 盐度 (‰) - 开放数据/模拟数据使用
+    # 盐度 (‰) - 开放数据使用
     # 注意：电导率和盐度是不同的物理量，不能混用
     salinity = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True,
                                   verbose_name='盐度(‰)')
@@ -54,7 +54,7 @@ class SensorData(models.Model):
     # 数据来源标识
     data_source = models.CharField(max_length=50, blank=True, null=True,
                                   verbose_name='数据来源',
-                                  help_text='national/open/simulator/database')
+                                  help_text='national/open/database')
 
     # 时间戳
     recorded_at = models.DateTimeField(db_index=True, verbose_name='监测时间')

@@ -22,7 +22,8 @@
       "Bash(ls:*)",
       "Bash(npm run lint:*)",
       "Bash(npm run:*)",
-      "Bash(lsof:*)"
+      "Bash(lsof:*)",
+      "Bash(git add:*)"
     ]
   }
 }

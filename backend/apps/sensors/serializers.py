@@ -1,6 +1,6 @@
 """
 传感器数据序列化器 - 统一数据序列化
-支持国家水质自动综合监管平台、开放数据和模拟数据
+支持国家水质自动综合监管平台和开放数据
 """
 from rest_framework import serializers
 from .models import SensorData, Alert

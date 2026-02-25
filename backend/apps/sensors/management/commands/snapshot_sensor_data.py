@@ -17,7 +17,6 @@ from django.utils import timezone
 
 from core.national_water_data import NationalWaterDataService
 from core.open_data_provider import OpenWaterDataService
-from core.data_generator import SensorDataGenerator
 from core.data_transformer import DataTransformer
 from core.city_resolver import infer_city_name
 
@@ -85,15 +84,8 @@ class Command(BaseCommand):
                 source = 'open'
                 self.stdout.write(f'从开放数据源获取到 {len(sensors_data)} 条记录')
 
-        # 最后使用模拟数据
         if not sensors_data:
-            result = SensorDataGenerator.generate_multi_sensors_realtime(count=100)
-            sensors_data = result.get('sensors', [])
-            source = 'simulator'
-            self.stdout.write(f'使用模拟数据生成 {len(sensors_data)} 条记录')
-
-        if not sensors_data:
-            self.stdout.write(self.style.ERROR('没有获取到任何数据'))
+            self.stdout.write(self.style.WARNING('未获取到真实数据，已跳过本次快照'))
             return
 
         # 当前快照时间（使用整点时间，方便查询）

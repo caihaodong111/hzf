@@ -152,7 +152,7 @@ class DataTransformer:
 
         Args:
             data: 原始数据
-            source: 数据来源标识 ('national', 'open', 'simulator', 'database')
+            source: 数据来源标识 ('national', 'open', 'database')
 
         Returns:
             统一格式的数据
@@ -205,25 +205,6 @@ class DataTransformer:
                 'chlorophyll_a': cls._to_float(data.get('chlorophyll_a')),
                 'algae_density': cls._to_float(data.get('algae_density')),
                 # 开放数据通常没有省份流域信息
-                'province': None,
-                'river_basin': None,
-                'water_quality': None,
-            })
-
-        elif source == 'simulator':
-            # 模拟数据
-            transformed.update({
-                'temperature': cls._to_float(data.get('temperature')),
-                'ph': cls._to_float(data.get('ph')),
-                'dissolved_oxygen': cls._to_float(data.get('dissolved_oxygen')),
-                'salinity': cls._to_float(data.get('salinity')),
-                'permanganate': cls._to_float(data.get('permanganate')),
-                'permanganate_index': cls._to_float(data.get('permanganate')),
-                'ammonia_nitrogen': cls._to_float(data.get('ammonia_nitrogen')),
-                'total_phosphorus': cls._to_float(data.get('total_phosphorus')),
-                'total_nitrogen': cls._to_float(data.get('total_nitrogen')),
-                'chlorophyll_a': cls._to_float(data.get('chlorophyll_a')),
-                'algae_density': cls._to_float(data.get('algae_density')),
                 'province': None,
                 'river_basin': None,
                 'water_quality': None,

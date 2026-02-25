@@ -7,7 +7,6 @@ from rest_framework.response import Response
 
 from apps.sensors.models import Alert as AlertModel
 from apps.sensors.serializers import AlertSerializer
-from core.data_generator import SensorDataGenerator
 from core.open_data_provider import OpenWaterDataService
 from core.national_water_data import NationalWaterDataService
 from core.data_transformer import DataTransformer
@@ -34,10 +33,7 @@ class AlertViewSet:
             if raw_alerts:
                 alerts = [DataTransformer.transform_alert(a, 'open') for a in raw_alerts]
 
-        # 最后使用模拟数据
-        if not alerts:
-            raw_alerts = SensorDataGenerator.generate_alerts(count=count)
-            alerts = [DataTransformer.transform_alert(a, 'simulator') for a in raw_alerts]
+        # 无可用数据源时返回空列表
 
         return Response({
             'code': 200,

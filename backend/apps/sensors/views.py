@@ -15,7 +15,6 @@ from .serializers import (
     SensorDataSerializer, RealtimeDataSerializer,
     HistoricalDataSerializer, AlertSerializer, DashboardSummarySerializer
 )
-from core.data_generator import SensorDataGenerator
 from core.open_data_provider import OpenWaterDataService
 from core.national_water_data import NationalWaterDataService
 from core.data_transformer import DataTransformer
@@ -240,19 +239,14 @@ class SensorDataViewSet(viewsets.ReadOnlyModelViewSet):
                 'turbidity': float(snapshot.turbidity) if snapshot.turbidity is not None else None,
             })
 
-        # 如果数据库中没有历史数据，使用模拟数据
-        if not history_data:
-            if not device_id:
-                device_id = 'sensor_001'
-            raw_data = SensorDataGenerator.generate_historical_data(hours=hours, device_id=device_id)
-            history_data = [DataTransformer.transform_historical(d) for d in raw_data]
+        data_source = 'database' if history_data else 'none'
 
         return Response({
             'code': 200,
             'message': 'success',
             'data': {
                 'device_id': device_id,
-                'data_source': 'database',
+                'data_source': data_source,
                 'data': history_data,
                 'count': len(history_data)
             }
@@ -311,11 +305,8 @@ class AlertViewSet(viewsets.ModelViewSet):
             alerts = serializer.data
             source = 'database'
 
-        # 如果数据库也没有数据，使用模拟数据
         if not alerts:
-            raw_alerts = SensorDataGenerator.generate_alerts(count=count)
-            alerts = [DataTransformer.transform_alert(a, 'simulator') for a in raw_alerts]
-            source = 'simulator'
+            source = source or 'none'
 
         return Response({
             'code': 200,

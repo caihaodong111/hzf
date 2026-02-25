@@ -12,7 +12,6 @@ from django.utils import timezone
 from datetime import timedelta
 
 from apps.sensors.models import SensorData, SensorDataSnapshot, Alert
-from core.data_generator import SensorDataGenerator
 from core.open_data_provider import OpenWaterDataService
 from core.national_water_data import NationalWaterDataService
 from core.data_transformer import DataTransformer
@@ -42,10 +41,10 @@ def overview(request):
             realtime_data = result
             source = 'open'
 
-    # 最后使用模拟数据
+    # 无可用数据源时返回空结果
     if not realtime_data:
-        realtime_data = SensorDataGenerator.generate_multi_sensors_realtime(count=count)
-        source = 'simulator'
+        realtime_data = {'sensors': [], 'timestamp': timezone.now().isoformat()}
+        source = 'none'
 
     # 计算统计数据 - 使用真实数据
     sensors = realtime_data.get('sensors', [])
@@ -78,7 +77,7 @@ def overview(request):
         elif OpenWaterDataService.enabled():
             raw_alerts = OpenWaterDataService.get_alerts(count=10)
         else:
-            raw_alerts = SensorDataGenerator.generate_alerts(count=10)
+            raw_alerts = []
 
         alert_count = len([a for a in raw_alerts if not a.get('resolved', False)])
 
@@ -91,8 +90,7 @@ def overview(request):
         raw_alerts = OpenWaterDataService.get_alerts(count=5)
         alerts = [DataTransformer.transform_alert(a, 'open') for a in raw_alerts]
     else:
-        raw_alerts = SensorDataGenerator.generate_alerts(count=5)
-        alerts = [DataTransformer.transform_alert(a, 'simulator') for a in raw_alerts]
+        alerts = []
 
     # 计算水质分布
     water_quality_dist = {}

@@ -33,21 +33,5 @@ CREATE TABLE IF NOT EXISTS alerts (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='告警记录表';
 
 
--- 插入示例告警数据
-INSERT INTO alerts (device_id, alert_type, alert_level, message, value, resolved) VALUES
-('sensor_003', 'dissolved_oxygen', 'warning', '溶解氧偏低：4.8 mg/L', 4.8, FALSE),
-('sensor_005', 'temperature', 'critical', '水温过高：33.5℃', 33.5, FALSE),
-('sensor_002', 'ph', 'warning', 'pH值偏高：8.6', 8.6, TRUE);
-
--- 插入一些模拟的传感器数据
-INSERT INTO sensor_data (device_id, temperature, salinity, dissolved_oxygen, ph, recorded_at) VALUES
-('sensor_001', 26.5, 35.2, 7.2, 7.8, NOW()),
-('sensor_002', 27.1, 34.8, 6.9, 7.6, NOW()),
-('sensor_003', 25.8, 35.5, 7.5, 7.9, NOW()),
-('sensor_004', 26.2, 35.0, 7.1, 7.7, NOW()),
-('sensor_005', 27.5, 34.5, 6.8, 7.5, NOW());
-
 -- 完成
 SELECT 'Database initialized successfully!' AS status;
-SELECT COUNT(*) AS alert_count FROM alerts;
-SELECT COUNT(*) AS sensor_data_count FROM sensor_data;
