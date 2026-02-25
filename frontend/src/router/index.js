@@ -4,6 +4,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import Dashboard from '@/views/Dashboard.vue'
 import Analysis from '@/views/Analysis.vue'
 import AiAssistant from '@/views/AiAssistant.vue'
+import Settings from '@/views/Settings.vue'
 
 const routes = [
   {
@@ -20,6 +21,11 @@ const routes = [
     path: '/ai',
     name: 'AiAssistant',
     component: AiAssistant
+  },
+  {
+    path: '/settings',
+    name: 'Settings',
+    component: Settings
   }
 ]
 

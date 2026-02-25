@@ -21,6 +21,7 @@ from .serializers import (
 from core.open_data_provider import OpenWaterDataService
 from core.national_water_data import NationalWaterDataService
 from core.data_transformer import DataTransformer
+from core.data_source_preference import get_data_source_priority
 from core.city_matcher import matches_city
 from core.city_resolver import infer_city_name, resolve_area_name
 
@@ -83,32 +84,32 @@ class SensorDataViewSet(viewsets.ReadOnlyModelViewSet):
         source = None
         total = 0
 
-        # 优先使用国家水质数据
-        if NationalWaterDataService.enabled():
-            result = NationalWaterDataService.get_realtime(
-                count=count,
-                area_id=area_id,
-                river_id=river_id,
-                search_name=search_name,
-                city_name=city_name,  # 传递城市参数
-                force_refresh=force_refresh
-            )
-            raw_data = result.get("sensors", [])
-            if raw_data:
-                source = 'national'
-                total = result.get("total", len(raw_data))
-
-        # 其次使用外部数据源
-        if not raw_data and OpenWaterDataService.enabled():
-            result = OpenWaterDataService.get_realtime(
-                count=count,
-                area_id=area_id,
-                city_name=city_name
-            )
-            raw_data = result.get("sensors", [])
-            if raw_data:
-                source = 'open'
-                total = len(raw_data)
+        for preferred in get_data_source_priority():
+            if preferred == 'national' and NationalWaterDataService.enabled():
+                result = NationalWaterDataService.get_realtime(
+                    count=count,
+                    area_id=area_id,
+                    river_id=river_id,
+                    search_name=search_name,
+                    city_name=city_name,  # 传递城市参数
+                    force_refresh=force_refresh
+                )
+                raw_data = result.get("sensors", [])
+                if raw_data:
+                    source = 'national'
+                    total = result.get("total", len(raw_data))
+                    break
+            if preferred == 'open' and OpenWaterDataService.enabled():
+                result = OpenWaterDataService.get_realtime(
+                    count=count,
+                    area_id=area_id,
+                    city_name=city_name
+                )
+                raw_data = result.get("sensors", [])
+                if raw_data:
+                    source = 'open'
+                    total = len(raw_data)
+                    break
 
         # 最后使用数据库快照数据作为备用
         if not raw_data:
@@ -384,14 +385,17 @@ class SensorDataViewSet(viewsets.ReadOnlyModelViewSet):
 
         # 数据库也无历史时，回退到真实数据源历史接口
         if not history_data and device_id:
-            if NationalWaterDataService.enabled():
-                history_data = NationalWaterDataService.get_history(device_id=device_id, hours=hours)
-                if history_data:
-                    data_source = 'national'
-            if not history_data and OpenWaterDataService.enabled():
-                history_data = OpenWaterDataService.get_history(device_id=device_id, hours=hours)
-                if history_data:
-                    data_source = 'open'
+            for preferred in get_data_source_priority():
+                if preferred == 'national' and NationalWaterDataService.enabled():
+                    history_data = NationalWaterDataService.get_history(device_id=device_id, hours=hours)
+                    if history_data:
+                        data_source = 'national'
+                        break
+                if preferred == 'open' and OpenWaterDataService.enabled():
+                    history_data = OpenWaterDataService.get_history(device_id=device_id, hours=hours)
+                    if history_data:
+                        data_source = 'open'
+                        break
 
         data_source = data_source or 'none'
 
@@ -438,19 +442,19 @@ class AlertViewSet(viewsets.ModelViewSet):
         alerts = []
         source = None
 
-        # 优先使用国家水质数据
-        if NationalWaterDataService.enabled():
-            raw_alerts = NationalWaterDataService.get_alerts(count=count)
-            if raw_alerts:
-                alerts = [DataTransformer.transform_alert(a, 'national') for a in raw_alerts]
-                source = 'national'
-
-        # 其次使用外部数据源
-        if not alerts and OpenWaterDataService.enabled():
-            raw_alerts = OpenWaterDataService.get_alerts(count=count)
-            if raw_alerts:
-                alerts = [DataTransformer.transform_alert(a, 'open') for a in raw_alerts]
-                source = 'open'
+        for preferred in get_data_source_priority():
+            if preferred == 'national' and NationalWaterDataService.enabled():
+                raw_alerts = NationalWaterDataService.get_alerts(count=count)
+                if raw_alerts:
+                    alerts = [DataTransformer.transform_alert(a, 'national') for a in raw_alerts]
+                    source = 'national'
+                    break
+            if preferred == 'open' and OpenWaterDataService.enabled():
+                raw_alerts = OpenWaterDataService.get_alerts(count=count)
+                if raw_alerts:
+                    alerts = [DataTransformer.transform_alert(a, 'open') for a in raw_alerts]
+                    source = 'open'
+                    break
 
         # 最后使用数据库数据
         if not alerts:

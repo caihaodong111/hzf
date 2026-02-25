@@ -15,6 +15,11 @@ from apps.sensors.models import SensorData, SensorDataSnapshot, Alert
 from core.open_data_provider import OpenWaterDataService
 from core.national_water_data import NationalWaterDataService
 from core.data_transformer import DataTransformer
+from core.data_source_preference import (
+    get_data_source_mode,
+    get_data_source_priority,
+    set_data_source_mode,
+)
 
 
 @api_view(['GET'])
@@ -27,19 +32,19 @@ def overview(request):
     realtime_data = None
     source = None
 
-    # 优先使用国家水质数据
-    if NationalWaterDataService.enabled():
-        result = NationalWaterDataService.get_realtime(count=count)
-        if result.get("sensors"):
-            realtime_data = result
-            source = 'national'
-
-    # 其次使用外部数据源
-    if not realtime_data and OpenWaterDataService.enabled():
-        result = OpenWaterDataService.get_realtime(count=count)
-        if result.get("sensors"):
-            realtime_data = result
-            source = 'open'
+    for preferred in get_data_source_priority():
+        if preferred == 'national' and NationalWaterDataService.enabled():
+            result = NationalWaterDataService.get_realtime(count=count)
+            if result.get("sensors"):
+                realtime_data = result
+                source = 'national'
+                break
+        if preferred == 'open' and OpenWaterDataService.enabled():
+            result = OpenWaterDataService.get_realtime(count=count)
+            if result.get("sensors"):
+                realtime_data = result
+                source = 'open'
+                break
 
     # 无可用数据源时返回空结果
     if not realtime_data:
@@ -72,23 +77,26 @@ def overview(request):
     # 如果数据库没有告警，从数据源获取
     if alert_count == 0:
         raw_alerts = []
-        if NationalWaterDataService.enabled():
-            raw_alerts = NationalWaterDataService.get_alerts(count=10)
-        elif OpenWaterDataService.enabled():
-            raw_alerts = OpenWaterDataService.get_alerts(count=10)
-        else:
-            raw_alerts = []
-
+        for preferred in get_data_source_priority():
+            if preferred == 'national' and NationalWaterDataService.enabled():
+                raw_alerts = NationalWaterDataService.get_alerts(count=10)
+                break
+            if preferred == 'open' and OpenWaterDataService.enabled():
+                raw_alerts = OpenWaterDataService.get_alerts(count=10)
+                break
         alert_count = len([a for a in raw_alerts if not a.get('resolved', False)])
 
     # 格式化告警数据
     alerts = []
-    if NationalWaterDataService.enabled():
-        raw_alerts = NationalWaterDataService.get_alerts(count=5)
-        alerts = [DataTransformer.transform_alert(a, 'national') for a in raw_alerts]
-    elif OpenWaterDataService.enabled():
-        raw_alerts = OpenWaterDataService.get_alerts(count=5)
-        alerts = [DataTransformer.transform_alert(a, 'open') for a in raw_alerts]
+    for preferred in get_data_source_priority():
+        if preferred == 'national' and NationalWaterDataService.enabled():
+            raw_alerts = NationalWaterDataService.get_alerts(count=5)
+            alerts = [DataTransformer.transform_alert(a, 'national') for a in raw_alerts]
+            break
+        if preferred == 'open' and OpenWaterDataService.enabled():
+            raw_alerts = OpenWaterDataService.get_alerts(count=5)
+            alerts = [DataTransformer.transform_alert(a, 'open') for a in raw_alerts]
+            break
     else:
         alerts = []
 
@@ -323,6 +331,29 @@ def _get_device_counts_from_snapshots(hours):
     online = snapshots.filter(snapshot_time__gte=online_threshold).values('device_id').distinct().count()
     offline = max(total - online, 0)
     return total, online, offline
+
+
+@api_view(['GET', 'POST'])
+def data_source_settings(request):
+    if request.method == 'POST':
+        payload = request.data or {}
+        mode = payload.get('mode')
+        preference = set_data_source_mode(mode)
+    else:
+        preference = None
+
+    current_mode = preference.mode if preference else get_data_source_mode()
+    return Response({
+        'code': 200,
+        'message': 'success',
+        'data': {
+            'mode': current_mode,
+            'availability': {
+                'national_enabled': NationalWaterDataService.enabled(),
+                'open_enabled': OpenWaterDataService.enabled(),
+            }
+        }
+    })
 
 
 def _get_device_counts_from_history(hours):
