@@ -236,6 +236,8 @@ const initCharts = async () => {
 }
 
 const updateCharts = () => {
+  const trendCount = trendHistory.value.length
+  const showTrendPoints = trendCount <= 1
   const qData = Object.entries(qualityColors)
     .map(([name, color]) => ({
       name,
@@ -276,9 +278,10 @@ const updateCharts = () => {
         name: '溶解氧',
         type: 'line',
         smooth: true,
-        showSymbol: false,
+        showSymbol: showTrendPoints,
+        symbolSize: showTrendPoints ? 6 : 4,
         data: trendHistory.value.map(item => item.dissolved_oxygen),
-        lineStyle: { width: 3, color: '#0ea5e9' },
+        lineStyle: { width: showTrendPoints ? 0 : 3, color: '#0ea5e9' },
         areaStyle: {
           color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
             { offset: 0, color: 'rgba(9, 132, 227, 0.2)' },
@@ -290,9 +293,10 @@ const updateCharts = () => {
         name: 'pH值',
         type: 'line',
         smooth: true,
-        showSymbol: false,
+        showSymbol: showTrendPoints,
+        symbolSize: showTrendPoints ? 6 : 4,
         data: trendHistory.value.map(item => item.ph),
-        lineStyle: { width: 3, color: '#14b8a6' }
+        lineStyle: { width: showTrendPoints ? 0 : 3, color: '#14b8a6' }
       }
     ]
   })
