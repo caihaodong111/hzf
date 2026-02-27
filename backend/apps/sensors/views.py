@@ -19,6 +19,7 @@ from .serializers import (
 )
 from core.open_data_provider import OpenWaterDataService, fetch_records
 from core.national_water_data import NationalWaterDataService
+from core.huawei_water_data import HuaweiWaterDataService
 from core.data_transformer import DataTransformer
 from core.data_source_preference import get_data_source_priority, get_data_source_mode
 from core.realtime_store import sync_realtime_data
@@ -89,6 +90,16 @@ class SensorDataViewSet(viewsets.ReadOnlyModelViewSet):
         if use_source_filter:
             device_ids = set()
             source_available = False
+            if HuaweiWaterDataService.enabled():
+                source_available = True
+                try:
+                    from core.huawei_water_data import fetch_records as huawei_fetch_records
+                    huawei_records = huawei_fetch_records()
+                    device_ids.update(
+                        record.device_id for record in huawei_records if getattr(record, "device_id", None)
+                    )
+                except Exception:
+                    pass
             if NationalWaterDataService.enabled():
                 source_available = True
                 try:
@@ -342,6 +353,12 @@ class AlertViewSet(viewsets.ModelViewSet):
 
         if not manual_mode:
             for preferred in get_data_source_priority():
+                if preferred == 'huawei' and HuaweiWaterDataService.enabled():
+                    raw_alerts = HuaweiWaterDataService.get_alerts(count=count)
+                    if raw_alerts:
+                        alerts = [DataTransformer.transform_alert(a, 'huawei') for a in raw_alerts]
+                        source = 'huawei'
+                        break
                 if preferred == 'national' and NationalWaterDataService.enabled():
                     raw_alerts = NationalWaterDataService.get_alerts(count=count)
                     if raw_alerts:

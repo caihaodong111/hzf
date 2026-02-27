@@ -6,6 +6,10 @@ import json
 from pathlib import Path
 from datetime import timedelta
 
+# Load environment variables from .env file
+from dotenv import load_dotenv
+load_dotenv()
+
 # 修复Django 6.x的mysqlclient版本检查问题 - 必须在导入django.db.backends之前执行
 import sys
 import pymysql
@@ -249,3 +253,16 @@ OPEN_WATER_DATA = {
 # National water data configuration (国家水质自动综合监管平台)
 NATIONAL_WATER_DATA_ENABLED = os.environ.get("NATIONAL_WATER_DATA_ENABLED", "true").lower() == "true"
 NATIONAL_WATER_DATA_CACHE_MINUTES = int(os.environ.get("NATIONAL_WATER_DATA_CACHE_MINUTES", "20"))
+
+# Huawei water data configuration (华为云API市场 - 地表水监测数据)
+HUAWEI_WATER_DATA = {
+    "enabled": os.environ.get("HUAWEI_WATER_DATA_ENABLED", "false").lower() == "true",
+    "url": os.environ.get("HUAWEI_WATER_DATA_URL", "https://nawaterstation.apistore.huaweicloud.com/api/surface_water/data"),
+    "app_key": os.environ.get("HUAWEI_WATER_DATA_APP_KEY", ""),
+    "app_secret": os.environ.get("HUAWEI_WATER_DATA_APP_SECRET", ""),
+    "timeout": int(os.environ.get("HUAWEI_WATER_DATA_TIMEOUT", "15")),
+    "cache_minutes": int(os.environ.get("HUAWEI_WATER_DATA_CACHE_MINUTES", "10")),
+    "json_path": os.environ.get("HUAWEI_WATER_DATA_JSON_PATH", "data"),
+    "default_params": json.loads(os.environ.get("HUAWEI_WATER_DATA_DEFAULT_PARAMS", '{"version":"v1"}')),
+    "stanames": json.loads(os.environ.get("HUAWEI_WATER_DATA_STANAMES", '[]')) if os.environ.get("HUAWEI_WATER_DATA_STANAMES") else [],
+}

@@ -24,7 +24,13 @@
       "Bash(npm run:*)",
       "Bash(lsof:*)",
       "Bash(git add:*)",
-      "Bash(wc:*)"
+      "Bash(wc:*)",
+      "Bash(pip3 install:*)",
+      "Bash(DJANGO_SETTINGS_MODULE=aquaculture.settings python -c \"\nfrom django.conf import settings\nimport django\ndjango.setup\\(\\)\n\nfrom core.huawei_water_data import _try_sdk_request\n\nconfig = settings.HUAWEI_WATER_DATA\nurl = config[''url'']\napp_key = config[''app_key'']\napp_secret = config[''app_secret'']\n\n# 测试不带staname参数的请求\nimport json\nresult = _try_sdk_request\\(url, app_key, app_secret, 15\\)\nif result:\n    print\\(json.dumps\\(result, ensure_ascii=False, indent=2\\)\\)\nelse:\n    print\\(''请求失败''\\)\n\")",
+      "Bash(DJANGO_SETTINGS_MODULE=aquaculture.settings python:*)",
+      "Bash(pip3 list:*)",
+      "Bash(conda info:*)",
+      "Bash(xargs kill:*)"
     ]
   }
 }

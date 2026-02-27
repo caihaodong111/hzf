@@ -3,6 +3,7 @@ Store realtime data from external sources into database tables.
 """
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
@@ -11,11 +12,14 @@ from django.utils.dateparse import parse_datetime
 
 from django.db.models import Max
 
+logger = logging.getLogger(__name__)
+
 from apps.sensors.models import ManualSensorData, SensorData
 from core.data_source_preference import get_data_source_priority
 from core.data_transformer import DataTransformer
 from core.national_water_data import NationalWaterDataService
 from core.open_data_provider import OpenWaterDataService
+from core.huawei_water_data import HuaweiWaterDataService
 from core.city_resolver import infer_city_name, infer_province_name
 
 
@@ -36,6 +40,10 @@ def _fetch_realtime(source: str, count: int) -> List[Dict[str, Any]]:
         return result.get("sensors", [])
     if source == "open":
         result = OpenWaterDataService.get_realtime(count=count)
+        return result.get("sensors", [])
+    if source == "huawei":
+        # 华为数据源强制刷新缓存，确保获取最新数据
+        result = HuaweiWaterDataService.get_realtime(count=count, force_refresh=True)
         return result.get("sensors", [])
     return []
 
@@ -62,7 +70,7 @@ def sync_realtime_data(
         results: List[Dict[str, Any]] = []
         total_created = 0
         total_updated = 0
-        for item in ("national", "open"):
+        for item in ("national", "open", "huawei"):
             created = 0
             updated = 0
             result = sync_realtime_data(source=item, count=count)
@@ -80,7 +88,10 @@ def sync_realtime_data(
 
     selected_source, sensors = _pick_source(normalized_source, count)
     if not sensors:
+        logger.warning(f"数据源 {selected_source} 未获取到传感器数据")
         return {"source": selected_source, "created": 0, "updated": 0}
+
+    logger.info(f"从数据源 {selected_source} 获取到 {len(sensors)} 条传感器数据")
 
     created = 0
     updated = 0
@@ -125,8 +136,10 @@ def sync_realtime_data(
             row["device_id"]: row["last_time"]
             for row in latest_qs.values("device_id").annotate(last_time=Max("recorded_at"))
         }
+        logger.info(f"数据库中已存在 {len(latest_by_device)} 个设备的最新记录")
 
     to_create = []
+    skipped = 0
     for sensor in transformed_sensors:
         device_id = sensor.get("device_id")
         ts = sensor.get("recorded_at")
@@ -134,6 +147,7 @@ def sync_realtime_data(
             continue
         last_time = latest_by_device.get(device_id)
         if last_time and ts <= last_time:
+            skipped += 1
             continue
         payload = {
             "device_id": device_id,
@@ -164,5 +178,8 @@ def sync_realtime_data(
     if to_create:
         target_model.objects.bulk_create(to_create, batch_size=200)
         created = len(to_create)
+        logger.info(f"数据源 {selected_source}: 新入库 {created} 条，跳过 {skipped} 条（重复或时间戳更旧）")
+    else:
+        logger.info(f"数据源 {selected_source}: 没有新数据入库，跳过 {skipped} 条（全部重复或时间戳更旧）")
 
     return {"source": selected_source, "created": created, "updated": updated}
