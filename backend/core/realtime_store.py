@@ -16,7 +16,7 @@ from core.data_source_preference import get_data_source_priority
 from core.data_transformer import DataTransformer
 from core.national_water_data import NationalWaterDataService
 from core.open_data_provider import OpenWaterDataService
-from core.city_resolver import infer_city_name
+from core.city_resolver import infer_city_name, infer_province_name
 
 
 def _parse_timestamp(value: Any) -> datetime:
@@ -92,14 +92,27 @@ def sync_realtime_data(
         transformed = DataTransformer.transform_realtime_data(sensor, selected_source)
         if not transformed.get("device_id"):
             continue
-        city_name = infer_city_name(
-            (transformed.get("device_name"), transformed.get("location")),
-            transformed.get("province") or "",
+        province_name = transformed.get("province") or infer_province_name(
+            (
+                transformed.get("location"),
+                transformed.get("device_name"),
+                transformed.get("city"),
+            ),
+            transformed.get("city") or "",
+        )
+        city_name = transformed.get("city") or infer_city_name(
+            (
+                transformed.get("device_name"),
+                transformed.get("location"),
+                province_name,
+            ),
+            province_name or "",
             transformed.get("device_id") or "",
         )
         recorded_at = _parse_timestamp(transformed.get("timestamp"))
         transformed["recorded_at"] = recorded_at
-        transformed["city"] = transformed.get("city") or city_name
+        transformed["province"] = province_name
+        transformed["city"] = city_name
         transformed_sensors.append(transformed)
 
     device_ids = [sensor.get("device_id") for sensor in transformed_sensors if sensor.get("device_id")]

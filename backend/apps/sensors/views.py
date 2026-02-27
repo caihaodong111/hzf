@@ -17,7 +17,7 @@ from .serializers import (
     SensorDataSerializer, RealtimeDataSerializer,
     HistoricalDataSerializer, AlertSerializer, DashboardSummarySerializer
 )
-from core.open_data_provider import OpenWaterDataService
+from core.open_data_provider import OpenWaterDataService, fetch_records
 from core.national_water_data import NationalWaterDataService
 from core.data_transformer import DataTransformer
 from core.data_source_preference import get_data_source_priority, get_data_source_mode
@@ -79,25 +79,80 @@ class SensorDataViewSet(viewsets.ReadOnlyModelViewSet):
         river_id = request.query_params.get('river_id', '')
         search_name = request.query_params.get('search_name', '')
         city_name = request.query_params.get('city_name', '')  # 添加城市参数
+        force_refresh = str(request.query_params.get('force_refresh', '')).lower() in ('1', 'true', 'yes')
         last_version = request.query_params.get('last_version', '')
         manual_mode = get_data_source_mode() == 'manual'
         base_queryset = ManualSensorData.objects.all() if manual_mode else SensorData.objects.all()
 
-        if search_name:
-            base_queryset = base_queryset.filter(device_name__icontains=search_name)
-        area_name = resolve_area_name(area_id)
-        if area_name:
-            if area_id.endswith("0000"):
-                base_queryset = base_queryset.filter(province__icontains=area_name)
-            else:
-                base_queryset = base_queryset.filter(
-                    Q(city__icontains=area_name) |
-                    Q(location__icontains=area_name) |
-                    Q(device_name__icontains=area_name) |
-                    Q(province__icontains=area_name)
-                )
-        if river_id:
-            base_queryset = base_queryset.filter(river_basin__icontains=river_id)
+        use_source_filter = (not manual_mode) and (area_id or river_id or search_name or city_name)
+        source_filter_applied = False
+        if use_source_filter:
+            device_ids = set()
+            source_available = False
+            if NationalWaterDataService.enabled():
+                source_available = True
+                try:
+                    records = NationalWaterDataService.api().fetch_records(
+                        area_id=area_id,
+                        river_id=river_id,
+                        search_name=search_name,
+                        city_name=city_name,
+                        force_refresh=force_refresh,
+                        max_pages=10,
+                    )
+                    device_ids.update(
+                        record.device_id for record in records if getattr(record, "device_id", None)
+                    )
+                except Exception:
+                    pass
+            if OpenWaterDataService.enabled():
+                source_available = True
+                try:
+                    open_records = fetch_records()
+                    filter_name = city_name or resolve_area_name(area_id)
+                    if filter_name:
+                        open_records = [
+                            record for record in open_records
+                            if matches_city(filter_name, (record.location, record.device_name))
+                        ]
+                    if search_name:
+                        search_lower = search_name.strip().lower()
+                        if search_lower:
+                            open_records = [
+                                record for record in open_records
+                                if search_lower in (record.device_name or "").lower()
+                                or search_lower in (record.location or "").lower()
+                            ]
+                    device_ids.update(
+                        record.device_id for record in open_records if getattr(record, "device_id", None)
+                    )
+                except Exception:
+                    pass
+            if source_available:
+                source_filter_applied = True
+                if device_ids:
+                    base_queryset = base_queryset.filter(device_id__in=device_ids)
+                else:
+                    base_queryset = base_queryset.none()
+
+        if not source_filter_applied:
+            if search_name:
+                base_queryset = base_queryset.filter(device_name__icontains=search_name)
+            area_name = resolve_area_name(area_id)
+            if area_name:
+                if area_id.endswith("0000"):
+                    base_queryset = base_queryset.filter(province__icontains=area_name)
+                else:
+                    base_queryset = base_queryset.filter(
+                        Q(city__icontains=area_name) |
+                        Q(location__icontains=area_name) |
+                        Q(device_name__icontains=area_name) |
+                        Q(province__icontains=area_name)
+                    )
+            if river_id:
+                base_queryset = base_queryset.filter(river_basin__icontains=river_id)
+
+        city_post_filter = bool(city_name) and not source_filter_applied
 
         latest_records = base_queryset.exclude(device_id__isnull=True).values('device_id').annotate(
             latest_time=Max('recorded_at')
@@ -146,7 +201,7 @@ class SensorDataViewSet(viewsets.ReadOnlyModelViewSet):
             transformed["_recorded_at"] = record.recorded_at
             sensors.append(transformed)
 
-        if city_name:
+        if city_name and (manual_mode or city_post_filter):
             sensors = [
                 sensor for sensor in sensors
                 if matches_city(
