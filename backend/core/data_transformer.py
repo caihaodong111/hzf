@@ -159,6 +159,7 @@ class DataTransformer:
         """
         device_name = data.get('device_name')
         province = data.get('province')
+        city = data.get('city')
 
         transformed = {
             'data_source': source,
@@ -166,7 +167,10 @@ class DataTransformer:
             'device_name': device_name,
             'location': data.get('location'),
             'timestamp': data.get('timestamp') or data.get('recorded_at'),
-            'city': data.get('city'),
+            'city': city,
+            # 经纬度坐标
+            'longitude': cls._to_float(data.get('longitude')),
+            'latitude': cls._to_float(data.get('latitude')),
         }
 
         # 根据数据来源提取字段

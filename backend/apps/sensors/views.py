@@ -200,6 +200,8 @@ class SensorDataViewSet(viewsets.ReadOnlyModelViewSet):
                 'total_nitrogen': record.total_nitrogen,
                 'chlorophyll_a': record.chlorophyll_a,
                 'algae_density': record.algae_density,
+                'longitude': float(record.longitude) if record.longitude else None,
+                'latitude': float(record.latitude) if record.latitude else None,
                 'recorded_at': record.recorded_at,
             }, 'database')
             if not transformed.get("city"):

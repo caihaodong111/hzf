@@ -14,6 +14,12 @@ class SensorData(models.Model):
     city = models.CharField(max_length=50, blank=True, null=True, verbose_name='城市')
     river_basin = models.CharField(max_length=50, blank=True, null=True, verbose_name='流域')
 
+    # 地理坐标（用于地图显示）
+    longitude = models.DecimalField(max_digits=10, decimal_places=7, blank=True, null=True,
+                                     verbose_name='经度', help_text='东经为正，西经为负')
+    latitude = models.DecimalField(max_digits=10, decimal_places=7, blank=True, null=True,
+                                    verbose_name='纬度', help_text='北纬为正，南纬为负')
+
     # 基础水质参数
     temperature = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True,
                                       verbose_name='水温(℃)')
@@ -106,6 +112,12 @@ class ManualSensorData(models.Model):
     province = models.CharField(max_length=50, blank=True, null=True, verbose_name='省份')
     city = models.CharField(max_length=50, blank=True, null=True, verbose_name='城市')
     river_basin = models.CharField(max_length=50, blank=True, null=True, verbose_name='流域')
+
+    # 地理坐标（用于地图显示）
+    longitude = models.DecimalField(max_digits=10, decimal_places=7, blank=True, null=True,
+                                     verbose_name='经度', help_text='东经为正，西经为负')
+    latitude = models.DecimalField(max_digits=10, decimal_places=7, blank=True, null=True,
+                                    verbose_name='纬度', help_text='北纬为正，南纬为负')
 
     temperature = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True,
                                       verbose_name='水温(℃)')

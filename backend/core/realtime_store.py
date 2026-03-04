@@ -21,6 +21,7 @@ from core.national_water_data import NationalWaterDataService
 from core.open_data_provider import OpenWaterDataService
 from core.huawei_water_data import HuaweiWaterDataService
 from core.city_resolver import infer_city_name, infer_province_name
+from core.amap_geocoding import get_amap_service
 
 
 def _parse_timestamp(value: Any) -> datetime:
@@ -140,6 +141,17 @@ def sync_realtime_data(
 
     to_create = []
     skipped = 0
+
+    # 获取经纬度映射（批量获取以提高效率）
+    logger.info("开始获取断面经纬度坐标...")
+    amap_service = get_amap_service()
+    section_coords = amap_service.batch_geocode_sections(
+        [s.get("device_name") for s in transformed_sensors if s.get("device_name")],
+        province=None,
+        city=None
+    )
+    logger.info(f"成功获取 {len(section_coords)}/{len(transformed_sensors)} 个断面的经纬度")
+
     for sensor in transformed_sensors:
         device_id = sensor.get("device_id")
         ts = sensor.get("recorded_at")
@@ -149,13 +161,20 @@ def sync_realtime_data(
         if last_time and ts <= last_time:
             skipped += 1
             continue
+
+        # 获取经纬度坐标
+        device_name = sensor.get("device_name")
+        longitude, latitude = section_coords.get(device_name, (None, None))
+
         payload = {
             "device_id": device_id,
-            "device_name": sensor.get("device_name") or "",
+            "device_name": device_name or "",
             "location": sensor.get("location") or "",
             "province": sensor.get("province") or "",
             "city": sensor.get("city") or "",
             "river_basin": sensor.get("river_basin") or "",
+            "longitude": longitude,
+            "latitude": latitude,
             "temperature": sensor.get("temperature"),
             "ph": sensor.get("ph"),
             "dissolved_oxygen": sensor.get("dissolved_oxygen"),

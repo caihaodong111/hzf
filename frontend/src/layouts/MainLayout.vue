@@ -49,7 +49,7 @@
 
 <script setup>
 import { useRoute } from 'vue-router'
-import { Monitor, TrendCharts, ChatLineRound, Setting } from '@element-plus/icons-vue'
+import { Monitor, TrendCharts, MapLocation, ChatLineRound, Setting } from '@element-plus/icons-vue'
 
 const route = useRoute()
 
@@ -66,6 +66,12 @@ const menuItems = [
     title: '数据分析',
     subtitle: 'Analysis',
     icon: TrendCharts
+  },
+  {
+    path: '/map',
+    title: '水域地图',
+    subtitle: 'Map',
+    icon: MapLocation
   },
   {
     path: '/ai',
