@@ -34,7 +34,6 @@ province_city_count = defaultdict(lambda: defaultdict(int))
 for sensor in sensors:
     province = sensor.get('province')
     city = sensor.get('city')
-    device_name = sensor.get('device_name', '')
 
     if province:
         province_cities[province].add(city)

@@ -12,11 +12,12 @@ from django.db.models import Avg, Max
 from django.utils import timezone
 from datetime import timedelta
 
-from apps.sensors.models import ManualSensorData, SensorData, Alert
+from apps.sensors.models import SensorData, SensorSnapshot, Alert
 from core.open_data_provider import OpenWaterDataService
 from core.national_water_data import NationalWaterDataService
 from core.data_transformer import DataTransformer
 from core.data_source_preference import (
+    get_allowed_sources,
     get_data_source_mode,
     get_data_source_priority,
     set_data_source_mode,
@@ -34,22 +35,16 @@ def overview(request):
     realtime_data = None
     source = None
 
-    target_model = ManualSensorData if manual_mode else SensorData
-    latest_records = target_model.objects.exclude(device_id__isnull=True).values('device_id').annotate(
-        latest_time=Max('recorded_at')
-    ).order_by('-latest_time')
-    latest_time = latest_records.aggregate(max_time=Max('latest_time')).get('max_time')
+    snapshot_qs = SensorSnapshot.objects.exclude(station_id__isnull=True)
+    allowed_sources = get_allowed_sources()
+    if allowed_sources:
+        snapshot_qs = snapshot_qs.filter(data_source__in=allowed_sources)
+    latest_time = snapshot_qs.aggregate(max_time=Max('recorded_at')).get('max_time')
     sensors = []
-    for item in latest_records[:count]:
-        record = target_model.objects.filter(
-            device_id=item['device_id'],
-            recorded_at=item['latest_time']
-        ).first()
-        if not record:
-            continue
+    for record in snapshot_qs.order_by('-recorded_at')[:count]:
         transformed = DataTransformer.transform_realtime_data({
-            'device_id': record.device_id,
-            'device_name': record.device_name,
+            'station_id': record.station_id,
+            'station_name': record.station_name,
             'location': record.location,
             'province': record.province,
             'city': record.city,
@@ -69,7 +64,7 @@ def overview(request):
             'algae_density': record.algae_density,
             'recorded_at': record.recorded_at,
         }, 'database')
-        transformed['data_source'] = 'manual' if manual_mode else (record.data_source or 'auto')
+        transformed['data_source'] = record.data_source or ('manual' if manual_mode else 'auto')
         sensors.append(transformed)
     realtime_data = {
         'sensors': sensors,
@@ -218,16 +213,18 @@ def statistics(request):
     ).count()
 
     # 数据统计
-    data_qs = (ManualSensorData.objects if manual_mode else SensorData.objects).filter(
-        recorded_at__gte=time_threshold
-    )
+    data_qs = SensorData.objects.filter(recorded_at__gte=time_threshold)
+    if allowed_sources:
+        data_qs = data_qs.filter(data_source__in=allowed_sources)
     data_count = data_qs.count()
 
     # 水质统计
-    sensor_data_qs = (ManualSensorData.objects if manual_mode else SensorData.objects).filter(
+    sensor_data_qs = SensorData.objects.filter(
         recorded_at__gte=time_threshold,
         water_quality__isnull=False
     )
+    if allowed_sources:
+        sensor_data_qs = sensor_data_qs.filter(data_source__in=allowed_sources)
 
     quality_distribution = {}
     quality_levels = ['Ⅰ', 'Ⅱ', 'Ⅲ', 'Ⅳ', 'Ⅴ', '劣Ⅴ']
@@ -237,9 +234,9 @@ def statistics(request):
             quality_distribution[quality] = count
 
     # 使用数据库数据计算平均值
-    recent_data = (ManualSensorData.objects if manual_mode else SensorData.objects).filter(
-        recorded_at__gte=time_threshold
-    )
+    recent_data = SensorData.objects.filter(recorded_at__gte=time_threshold)
+    if allowed_sources:
+        recent_data = recent_data.filter(data_source__in=allowed_sources)
     recent_data = recent_data.aggregate(
         avg_temp=Avg('temperature'),
         avg_do=Avg('dissolved_oxygen'),
@@ -390,13 +387,13 @@ def data_source_settings(request):
 
 def _get_device_counts_from_history(hours, manual_mode=False):
     time_threshold = timezone.now() - timedelta(hours=hours)
-    data_qs = (ManualSensorData.objects if manual_mode else SensorData.objects).filter(
-        recorded_at__gte=time_threshold
-    )
+    data_qs = SensorData.objects.filter(recorded_at__gte=time_threshold)
+    if allowed_sources:
+        data_qs = data_qs.filter(data_source__in=allowed_sources)
     if not data_qs.exists():
         return 0, 0, 0
-    total = data_qs.values('device_id').distinct().count()
+    total = data_qs.values('station_id').distinct().count()
     online_threshold = timezone.now() - timedelta(hours=1)
-    online = data_qs.filter(recorded_at__gte=online_threshold).values('device_id').distinct().count()
+    online = data_qs.filter(recorded_at__gte=online_threshold).values('station_id').distinct().count()
     offline = max(total - online, 0)
     return total, online, offline

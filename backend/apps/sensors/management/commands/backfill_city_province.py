@@ -9,7 +9,7 @@ Usage:
 from django.core.management.base import BaseCommand
 from django.db import transaction
 
-from apps.sensors.models import ManualSensorData, SensorData
+from apps.sensors.models import SensorData
 from core.city_resolver import infer_city_name, infer_province_name
 
 
@@ -20,16 +20,16 @@ def _normalize_province(value: str) -> str:
 def _infer_for_record(record) -> tuple[str, str]:
     existing_province = _normalize_province(record.province)
     province_hint = existing_province or infer_province_name(
-        (record.location, record.device_name),
+        (record.location, record.station_name),
         "",
     )
     city_candidate = infer_city_name(
-        (record.device_name, record.location, record.province),
+        (record.station_name, record.location, record.province),
         province_hint or "",
-        record.device_id or "",
+        record.station_id or "",
     )
     province_candidate = infer_province_name(
-        (record.location, record.device_name, city_candidate),
+        (record.location, record.station_name, city_candidate),
         city_candidate or "",
     )
     if not province_candidate and province_hint:
@@ -74,14 +74,14 @@ def _backfill_queryset(queryset, batch_size: int, dry_run: bool) -> tuple[int, i
 
 
 class Command(BaseCommand):
-    help = "Backfill province/city for sensor_data/manual_sensor_data using inference rules."
+    help = "Backfill province/city for sensor_data using inference rules."
 
     def add_arguments(self, parser):
         parser.add_argument(
             "--model",
             type=str,
-            default="both",
-            choices=("sensor", "manual", "both"),
+            default="sensor",
+            choices=("sensor",),
             help="Choose which table to backfill.",
         )
         parser.add_argument(
@@ -108,12 +108,6 @@ class Command(BaseCommand):
                 SensorData.objects.all(), batch_size, dry_run
             )
             results.append(("sensor_data", scanned, updated))
-        if model in ("manual", "both"):
-            scanned, updated = _backfill_queryset(
-                ManualSensorData.objects.all(), batch_size, dry_run
-            )
-            results.append(("manual_sensor_data", scanned, updated))
-
         for table_name, scanned, updated in results:
             self.stdout.write(
                 self.style.SUCCESS(

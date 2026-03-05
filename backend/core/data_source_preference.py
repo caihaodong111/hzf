@@ -39,3 +39,10 @@ def get_data_source_priority() -> List[str]:
     if mode == DataSourcePreference.MODE_MANUAL:
         return ['huawei', 'open']
     return ['huawei', 'national', 'open']
+
+
+def get_allowed_sources() -> List[str]:
+    mode = get_data_source_mode()
+    if mode == DataSourcePreference.MODE_MANUAL:
+        return ['huawei', 'open', 'manual']
+    return ['national']

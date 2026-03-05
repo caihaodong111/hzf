@@ -10,7 +10,7 @@ class SensorDataSerializer(serializers.ModelSerializer):
     """传感器数据序列化器 - 数据库模型序列化"""
     class Meta:
         model = SensorData
-        fields = ['id', 'device_id', 'device_name', 'location', 'province', 'city', 'river_basin',
+        fields = ['id', 'station_id', 'station_name', 'location', 'province', 'city', 'river_basin',
                   'temperature', 'ph',
                   'dissolved_oxygen', 'conductivity', 'turbidity', 'salinity',
                   'water_quality', 'permanganate', 'ammonia_nitrogen',
@@ -22,8 +22,8 @@ class SensorDataSerializer(serializers.ModelSerializer):
 
 class RealtimeDataSerializer(serializers.Serializer):
     """实时数据序列化器 - 统一多数据源输出格式"""
-    device_id = serializers.CharField()
-    device_name = serializers.CharField(required=False, allow_null=True)
+    station_id = serializers.CharField()
+    station_name = serializers.CharField(required=False, allow_null=True)
     location = serializers.CharField(required=False, allow_null=True)
     province = serializers.CharField(required=False, allow_null=True)
     river_basin = serializers.CharField(required=False, allow_null=True)
@@ -72,7 +72,7 @@ class AlertSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Alert
-        fields = ['id', 'device_id', 'device_name', 'alert_type', 'alert_type_display',
+        fields = ['id', 'station_id', 'station_name', 'alert_type', 'alert_type_display',
                   'alert_level', 'alert_level_display', 'message', 'value', 'value_unit',
                   'resolved', 'resolved_at', 'created_at', 'updated_at', 'data_source']
         read_only_fields = ['created_at', 'updated_at']
@@ -80,26 +80,42 @@ class AlertSerializer(serializers.ModelSerializer):
 
 class AlertCreateSerializer(serializers.ModelSerializer):
     """告警创建序列化器 - 支持从不同数据源转换"""
-    device_id = serializers.CharField(write_only=True)
+    station_id = serializers.CharField(write_only=True)
+    station_name = serializers.CharField(required=False, allow_blank=True, allow_null=True, write_only=True)
+    device_id = serializers.CharField(required=False, allow_blank=True, allow_null=True, write_only=True)
     device_name = serializers.CharField(required=False, allow_blank=True, allow_null=True, write_only=True)
 
     class Meta:
         model = Alert
-        fields = ['device_id', 'device_name', 'alert_type', 'alert_level', 'message',
+        fields = ['station_id', 'station_name', 'device_id', 'device_name', 'alert_type', 'alert_level', 'message',
                   'value', 'value_unit', 'data_source']
 
+    def to_internal_value(self, data):
+        ret = super().to_internal_value(data)
+        if not ret.get('station_id'):
+            ret['station_id'] = ret.get('device_id')
+        if not ret.get('station_name'):
+            ret['station_name'] = ret.get('device_name')
+        if not ret.get('station_id'):
+            raise serializers.ValidationError({'station_id': 'station_id is required'})
+        return ret
+
     def create(self, validated_data):
-        """创建告警时补齐设备名称"""
-        device_id = validated_data.get('device_id')
-        device_name = validated_data.get('device_name') or device_id
-        validated_data['device_name'] = device_name
+        """创建告警时补齐站点名称"""
+        validated_data.pop('device_id', None)
+        validated_data.pop('device_name', None)
+        station_id = validated_data.get('station_id')
+        station_name = validated_data.get('station_name') or station_id
+        validated_data['station_name'] = station_name
         return Alert.objects.create(**validated_data)
 
 
 class AlertInputSerializer(serializers.Serializer):
     """告警输入序列化器 - 用于接收外部数据源的数据并转换"""
     # 外部数据源可能使用的字段名
-    device_id = serializers.CharField()
+    station_id = serializers.CharField(required=False, allow_null=True)
+    station_name = serializers.CharField(required=False, allow_null=True)
+    device_id = serializers.CharField(required=False, allow_null=True)
     device_name = serializers.CharField(required=False, allow_null=True)
     type = serializers.CharField(required=False, allow_null=True)  # 映射到 alert_type
     level = serializers.CharField(required=False, allow_null=True)  # 映射到 alert_level
@@ -119,6 +135,12 @@ class AlertInputSerializer(serializers.Serializer):
             ret['alert_level'] = ret.pop('level')
         if 'timestamp' in ret and ret['timestamp']:
             ret['created_at'] = ret.pop('timestamp')
+        if not ret.get('station_id'):
+            ret['station_id'] = ret.get('device_id')
+        if not ret.get('station_name'):
+            ret['station_name'] = ret.get('device_name')
+        if not ret.get('station_id'):
+            raise serializers.ValidationError({'station_id': 'station_id is required'})
 
         # 确保有必需的字段
         if 'alert_type' not in ret:

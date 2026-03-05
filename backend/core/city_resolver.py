@@ -93,7 +93,7 @@ def _stable_index(seed: str, size: int) -> int:
 def infer_city_name(
     fields: Iterable[Optional[str]],
     province: str = "",
-    device_id: str = ""
+    station_id: str = ""
 ) -> str:
     """Infer city name from known fields (no fallback assignment)."""
     province_name = _normalize_province_name(province)

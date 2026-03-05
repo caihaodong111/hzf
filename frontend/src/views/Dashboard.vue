@@ -131,12 +131,12 @@
                 <div
                   class="list-item"
                   v-for="(item, index) in scrollSensors"
-                  :key="`${index}-${item.device_id || item.device_name}`"
+                  :key="`${index}-${item.station_id || item.station_name}`"
                   :aria-hidden="shouldScroll && index >= sensorsCount"
                 >
                   <span class="cell">{{ item.province || '-' }}</span>
                   <span class="cell">{{ item.river_basin || '-' }}</span>
-                  <span class="name" :class="{ 'data-updated': item.justUpdated }">{{ item.device_name }}</span>
+                  <span class="name" :class="{ 'data-updated': item.justUpdated }">{{ item.station_name }}</span>
                   <span>
                     <b class="quality-text" :class="getQualityClass(item.water_quality)">{{ item.water_quality || '-' }}</b>
                   </span>
@@ -441,15 +441,15 @@ const loadRealtimeData = async (isAuto = false, forceRefresh = false) => {
       const newSensors = res.data.sensors || []
       total.value = res.data.total || newSensors.length
 
-      const oldDeviceMap = new Map(sensors.value.map(s => [s.device_id, s]))
+      const oldDeviceMap = new Map(sensors.value.map(s => [s.station_id, s]))
       const updatedDevices = []
 
       newSensors.forEach(newSensor => {
-        const oldSensor = oldDeviceMap.get(newSensor.device_id)
+        const oldSensor = oldDeviceMap.get(newSensor.station_id)
         if (!oldSensor) {
           newSensor.justUpdated = true
           newSensor.isNew = true
-          updatedDevices.push({ device: newSensor.device_name, type: 'new' })
+          updatedDevices.push({ device: newSensor.station_name, type: 'new' })
         } else {
           const hasChanged =
             oldSensor.timestamp !== newSensor.timestamp ||
@@ -461,7 +461,7 @@ const loadRealtimeData = async (isAuto = false, forceRefresh = false) => {
           if (hasChanged) {
             newSensor.justUpdated = true
             newSensor.isNew = false
-            updatedDevices.push({ device: newSensor.device_name, type: 'update' })
+            updatedDevices.push({ device: newSensor.station_name, type: 'update' })
           }
         }
 

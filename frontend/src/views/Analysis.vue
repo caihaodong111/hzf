@@ -76,9 +76,9 @@
             <el-tag type="danger" effect="dark" round>高风险优先</el-tag>
           </div>
           <el-table :data="riskTable" style="width: 100%" height="320" class="custom-table compact">
-            <el-table-column prop="device_name" label="站点" min-width="140" show-overflow-tooltip>
+            <el-table-column prop="station_name" label="站点" min-width="140" show-overflow-tooltip>
               <template #default="{ row }">
-                <div class="risk-name">{{ row.device_name || '-' }}</div>
+                <div class="risk-name">{{ row.station_name || '-' }}</div>
                 <div class="risk-meta">
                   DO {{ row.dissolved_oxygen ?? '-' }} · pH {{ row.ph ?? '-' }}
                 </div>
@@ -169,8 +169,8 @@ const lastUpdateText = computed(() => {
 })
 
 const trendDeviceName = computed(() => {
-  const target = sensors.value.find(s => s.device_id === trendDeviceId.value)
-  return target?.device_name || target?.device_id || '未选择'
+  const target = sensors.value.find(s => s.station_id === trendDeviceId.value)
+  return target?.station_name || target?.station_id || '未选择'
 })
 
 const onlineCount = computed(() => sensors.value.filter(s => s.status === 'online').length)
@@ -368,7 +368,7 @@ const loadData = async () => {
     sensors.value = sensorStore.cache.sensors.value
     overview.value = sensorStore.cache.overview.value
     if (!trendDeviceId.value && sensors.value.length) {
-      trendDeviceId.value = sensors.value[0].device_id
+      trendDeviceId.value = sensors.value[0].station_id
     }
     // 立即更新图表
     await nextTick()
@@ -396,7 +396,7 @@ const loadData = async () => {
       sensors.value = realtimeRes.data?.sensors || []
       lastUpdate.value = realtimeRes.data?.timestamp || lastUpdate.value
       if (!trendDeviceId.value && sensors.value.length) {
-        trendDeviceId.value = sensors.value[0].device_id
+        trendDeviceId.value = sensors.value[0].station_id
       }
     }
 
@@ -441,12 +441,12 @@ const applyTrendSearch = () => {
   const keyword = trendSearch.value.trim()
   if (!keyword) return
   const match = sensors.value.find(sensor => {
-    const name = sensor.device_name || ''
-    const id = sensor.device_id || ''
+    const name = sensor.station_name || ''
+    const id = sensor.station_id || ''
     return name.includes(keyword) || id.includes(keyword)
   })
   if (match) {
-    trendDeviceId.value = match.device_id
+    trendDeviceId.value = match.station_id
     loadTrend().then(() => updateCharts())
   }
 }

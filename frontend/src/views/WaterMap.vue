@@ -73,7 +73,7 @@
         <div class="glass-card detail-card">
           <div class="detail-header">
             <div>
-              <h3>{{ selectedSensor?.device_name || selectedSensor?.device_id || '未选择断面' }}</h3>
+              <h3>{{ selectedSensor?.station_name || selectedSensor?.station_id || '未选择断面' }}</h3>
               <p>
                 {{ selectedSensor?.province || '-' }} · {{ selectedSensor?.river_basin || '未知流域' }}
               </p>
@@ -130,14 +130,14 @@
           <div class="list-body">
             <button
               v-for="sensor in displaySensors.slice(0, 8)"
-              :key="sensor.device_id"
+              :key="sensor.station_id"
               class="list-item"
-              :class="{ active: sensor.device_id === selectedId }"
+              :class="{ active: sensor.station_id === selectedId }"
               type="button"
               @click="selectSensor(sensor)"
             >
               <div>
-                <span class="name">{{ sensor.device_name || sensor.device_id }}</span>
+                <span class="name">{{ sensor.station_name || sensor.station_id }}</span>
                 <span class="meta">{{ sensor.city || sensor.province || '-' }}</span>
               </div>
               <span class="mini-quality" :style="{ background: qualityColors[sensor.water_quality] || '#94a3b8' }">
@@ -206,9 +206,16 @@ const initAmap = () => {
       viewMode: '2D'
     })
 
-    // 添加工具栏
-    amapInstance.addControl(new AMap.Scale())
-    amapInstance.addControl(new AMap.ToolBar())
+    // 添加工具栏（部分加载方式下需要插件式加载）
+    if (window.AMap && typeof window.AMap.plugin === 'function') {
+      window.AMap.plugin(['AMap.Scale', 'AMap.ToolBar'], () => {
+        if (window.AMap.Scale) amapInstance.addControl(new window.AMap.Scale())
+        if (window.AMap.ToolBar) amapInstance.addControl(new window.AMap.ToolBar())
+      })
+    } else if (window.AMap?.Scale && window.AMap?.ToolBar) {
+      amapInstance.addControl(new window.AMap.Scale())
+      amapInstance.addControl(new window.AMap.ToolBar())
+    }
 
     console.log('高德地图初始化成功')
     updateMapMarkers()
@@ -230,7 +237,19 @@ const updateMapMarkers = () => {
   console.log('=== 添加标记点到高德地图 ===')
   console.log('标记点数量:', sensorsWithCoords.length)
   sensorsWithCoords.slice(0, 5).forEach(s => {
-    console.log(`${s.device_name}: [${s.longitude}, ${s.latitude}] 省份:${s.province}`)
+    console.log(`${s.station_name}: [${s.longitude}, ${s.latitude}] 省份:${s.province}`)
+  })
+
+  const markers = []
+  const coordCounts = new Map()
+  const coordUsed = new Map()
+
+  sensorsWithCoords.forEach(sensor => {
+    const lng = parseFloat(sensor.longitude)
+    const lat = parseFloat(sensor.latitude)
+    if (isNaN(lng) || isNaN(lat)) return
+    const key = `${lng.toFixed(6)},${lat.toFixed(6)}`
+    coordCounts.set(key, (coordCounts.get(key) || 0) + 1)
   })
 
   sensorsWithCoords.forEach(sensor => {
@@ -239,13 +258,29 @@ const updateMapMarkers = () => {
     const lat = parseFloat(sensor.latitude)
 
     if (isNaN(lng) || isNaN(lat)) {
-      console.warn(`坐标无效: ${sensor.device_name}`, sensor.longitude, sensor.latitude)
+      console.warn(`坐标无效: ${sensor.station_name}`, sensor.longitude, sensor.latitude)
       return
     }
 
+    const key = `${lng.toFixed(6)},${lat.toFixed(6)}`
+    const total = coordCounts.get(key) || 1
+    const used = coordUsed.get(key) || 0
+    coordUsed.set(key, used + 1)
+
+    let markerLng = lng
+    let markerLat = lat
+
+    if (total > 1) {
+      const angle = (used / total) * Math.PI * 2
+      const ring = Math.floor(used / 8)
+      const radius = 0.0005 * (1 + ring)
+      markerLng = lng + Math.cos(angle) * radius
+      markerLat = lat + Math.sin(angle) * radius
+    }
+
     const marker = new AMap.Marker({
-      position: [lng, lat],
-      title: sensor.device_name || sensor.device_id,
+      position: [markerLng, markerLat],
+      title: sensor.station_name || sensor.station_id,
       content: `<div style="background:${qualityColors[sensor.water_quality] || '#38bdf8'};width:20px;height:20px;border-radius:50%;border:2px solid white;box-shadow:0 2px 6px rgba(0,0,0,0.3);cursor:pointer;"></div>`,
       offset: new AMap.Pixel(-10, -10)
     })
@@ -255,12 +290,12 @@ const updateMapMarkers = () => {
       selectSensor(sensor)
     })
 
-    amapInstance.add(marker)
+    markers.push(marker)
   })
 
-  // 调整视野以包含所有标记
-  if (sensorsWithCoords.length > 0) {
-    amapInstance.setFitView()
+  if (markers.length > 0) {
+    amapInstance.add(markers)
+    amapInstance.setFitView(markers)
   }
 }
 
@@ -295,7 +330,7 @@ const displaySensors = computed(() => {
     const matchQuality = !qualityFilter.value || sensor.water_quality === qualityFilter.value
     const matchKeyword =
       !keyword ||
-      `${sensor.device_name || ''}${sensor.device_id || ''}${sensor.city || ''}${sensor.province || ''}`
+      `${sensor.station_name || ''}${sensor.station_id || ''}${sensor.city || ''}${sensor.province || ''}`
         .toLowerCase()
         .includes(keyword)
     return matchQuality && matchKeyword
@@ -303,12 +338,12 @@ const displaySensors = computed(() => {
 })
 
 const selectedSensor = computed(() =>
-  sensors.value.find(sensor => sensor.device_id === selectedId.value)
+  sensors.value.find(sensor => sensor.station_id === selectedId.value)
 )
 
 const mapPoints = computed(() => {
   return displaySensors.value.map(sensor => {
-    const key = sensor.device_id || sensor.device_name || sensor.location || 'unknown'
+    const key = sensor.station_id || sensor.station_name || sensor.location || 'unknown'
     const position = resolvePosition(key, sensor)
     return {
       key,
@@ -437,8 +472,8 @@ const resolvePosition = (key, sensor) => {
 }
 
 const applySearch = () => {
-  if (!displaySensors.value.find(sensor => sensor.device_id === selectedId.value)) {
-    selectedId.value = displaySensors.value[0]?.device_id || ''
+  if (!displaySensors.value.find(sensor => sensor.station_id === selectedId.value)) {
+    selectedId.value = displaySensors.value[0]?.station_id || ''
   }
 }
 
@@ -450,7 +485,7 @@ const loadRealtime = async () => {
     sensors.value = data
     lastUpdate.value = res?.data?.timestamp || ''
     if (!selectedId.value && data.length) {
-      selectedId.value = data[0].device_id
+      selectedId.value = data[0].station_id
     }
     await loadHistory()
   } catch (error) {
@@ -461,12 +496,12 @@ const loadRealtime = async () => {
 }
 
 const selectSensor = (sensor) => {
-  if (!sensor.device_id) return
-  selectedId.value = sensor.device_id
+  if (!sensor.station_id) return
+  selectedId.value = sensor.station_id
 
   // 输出调试信息
   console.log('=== 选中的断面 ===')
-  console.log('名称:', sensor.device_name)
+  console.log('名称:', sensor.station_name)
   console.log('经度:', sensor.longitude)
   console.log('纬度:', sensor.latitude)
   console.log('省份:', sensor.province)
@@ -590,9 +625,9 @@ onMounted(async () => {
 
 watch(displaySensors, (next) => {
   if (!next.length) return
-  const exists = next.some(sensor => sensor.device_id === selectedId.value)
+  const exists = next.some(sensor => sensor.station_id === selectedId.value)
   if (!exists) {
-    selectedId.value = next[0].device_id || ''
+    selectedId.value = next[0].station_id || ''
     loadHistory()
   }
 

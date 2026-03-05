@@ -1,6 +1,6 @@
 """
 通过获取全国数据提取实际有数据的城市
-使用DataTransformer的逻辑从device_name提取城市
+使用DataTransformer的逻辑从station_name提取城市
 """
 import os
 import sys
@@ -44,13 +44,13 @@ province_city_count = defaultdict(lambda: defaultdict(int))
 
 for sensor in all_sensors:
     province = sensor.get('province')
-    device_name = sensor.get('device_name', '')
+    station_name = sensor.get('station_name') or sensor.get('device_name', '')
 
     if not province:
         continue
 
     # 使用DataTransformer的逻辑提取城市
-    city = DataTransformer.extract_city_from_name(device_name, province)
+    city = DataTransformer.extract_city_from_name(station_name, province)
 
     if city:
         province_cities[province].add(city)

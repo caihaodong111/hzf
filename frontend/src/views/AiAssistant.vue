@@ -75,9 +75,9 @@
       <section class="data-preview glass-card">
         <div class="panel-title">上下文数据预览</div>
         <div class="preview-grid">
-          <div class="preview-card" v-for="item in compactSensors" :key="item.device_id">
+          <div class="preview-card" v-for="item in compactSensors" :key="item.station_id">
             <div class="preview-header">
-              <h4>{{ item.device_name || item.device_id }}</h4>
+              <h4>{{ item.station_name || item.station_id }}</h4>
               <span class="badge">{{ item.water_quality || '未知' }}</span>
             </div>
             <div class="preview-body">
@@ -121,8 +121,8 @@ const overviewTimestamp = computed(() => overview.value?.timestamp || '')
 const sensors = computed(() => overview.value?.sensors || [])
 const compactSensors = computed(() =>
   sensors.value.slice(0, 6).map(item => ({
-    device_id: item.device_id,
-    device_name: item.device_name,
+    station_id: item.station_id,
+    station_name: item.station_name,
     province: item.province,
     river_basin: item.river_basin,
     temperature: item.temperature,

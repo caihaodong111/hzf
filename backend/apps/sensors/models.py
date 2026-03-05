@@ -7,8 +7,19 @@ from django.db import models
 
 class SensorData(models.Model):
     """传感器数据模型 - 统一多数据源的水质监测数据"""
-    device_id = models.CharField(max_length=50, db_index=True, verbose_name='设备ID', blank=True, null=True)
-    device_name = models.CharField(max_length=100, blank=True, null=True, verbose_name='设备名称/断面名称')
+    station_id = models.CharField(
+        max_length=50,
+        db_index=True,
+        verbose_name='站点ID',
+        blank=True,
+        null=True,
+    )
+    station_name = models.CharField(
+        max_length=100,
+        blank=True,
+        null=True,
+        verbose_name='站点名称/断面名称',
+    )
     location = models.CharField(max_length=200, blank=True, null=True, verbose_name='位置')
     province = models.CharField(max_length=50, blank=True, null=True, verbose_name='省份')
     city = models.CharField(max_length=50, blank=True, null=True, verbose_name='城市')
@@ -76,7 +87,7 @@ class SensorData(models.Model):
         verbose_name_plural = '传感器数据'
         ordering = ['-recorded_at']
         indexes = [
-            models.Index(fields=['device_id', '-recorded_at'], name='sensor_data_device_time_idx'),
+            models.Index(fields=['station_id', '-recorded_at'], name='sensor_data_station_time_idx'),
             models.Index(fields=['recorded_at']),
             models.Index(fields=['data_source']),
             models.Index(fields=['water_quality']),
@@ -86,7 +97,7 @@ class SensorData(models.Model):
         ]
 
     def __str__(self):
-        return f"{self.device_id} - {self.recorded_at}"
+        return f"{self.station_id} - {self.recorded_at}"
 
     def get_water_quality_level(self):
         """获取水质等级数值"""
@@ -104,16 +115,15 @@ class SensorData(models.Model):
         return self.water_quality in ['Ⅳ', 'Ⅴ', '劣Ⅴ']
 
 
-class ManualSensorData(models.Model):
-    """手动更新数据表 - 仅存放手动获取的历史明细"""
-    device_id = models.CharField(max_length=50, db_index=True, verbose_name='设备ID', blank=True, null=True)
-    device_name = models.CharField(max_length=100, blank=True, null=True, verbose_name='设备名称/断面名称')
+class SensorSnapshot(models.Model):
+    """最新快照表 - 每个站点保留一条最新记录"""
+    station_id = models.CharField(max_length=50, db_index=True, verbose_name='站点ID', blank=True, null=True)
+    station_name = models.CharField(max_length=100, blank=True, null=True, verbose_name='站点名称/断面名称')
     location = models.CharField(max_length=200, blank=True, null=True, verbose_name='位置')
     province = models.CharField(max_length=50, blank=True, null=True, verbose_name='省份')
     city = models.CharField(max_length=50, blank=True, null=True, verbose_name='城市')
     river_basin = models.CharField(max_length=50, blank=True, null=True, verbose_name='流域')
 
-    # 地理坐标（用于地图显示）
     longitude = models.DecimalField(max_digits=10, decimal_places=7, blank=True, null=True,
                                      verbose_name='经度', help_text='东经为正，西经为负')
     latitude = models.DecimalField(max_digits=10, decimal_places=7, blank=True, null=True,
@@ -145,25 +155,34 @@ class ManualSensorData(models.Model):
     algae_density = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True,
                                         verbose_name='藻密度(cells/L)')
 
+    data_source = models.CharField(max_length=50, blank=True, null=True,
+                                   verbose_name='数据来源',
+                                   help_text='national/open/manual')
+
     recorded_at = models.DateTimeField(db_index=True, verbose_name='监测时间')
-    created_at = models.DateTimeField(auto_now_add=True, verbose_name='入库时间')
+    updated_at = models.DateTimeField(auto_now=True, verbose_name='快照更新时间')
 
     class Meta:
-        db_table = 'manual_sensor_data'
-        verbose_name = '手动更新数据'
-        verbose_name_plural = '手动更新数据'
+        db_table = 'sensor_data_latest'
+        verbose_name = '传感器最新快照'
+        verbose_name_plural = '传感器最新快照'
         ordering = ['-recorded_at']
         indexes = [
-            models.Index(fields=['device_id', '-recorded_at'], name='manual_data_device_time_idx'),
-            models.Index(fields=['recorded_at']),
-            models.Index(fields=['water_quality']),
-            models.Index(fields=['province'], name='manual_data_province_idx'),
-            models.Index(fields=['city'], name='manual_data_city_idx'),
-            models.Index(fields=['river_basin'], name='manual_data_river_idx'),
+            models.Index(fields=['station_id'], name='snapshot_station_idx'),
+            models.Index(fields=['recorded_at'], name='snapshot_time_idx'),
+            models.Index(fields=['province'], name='snapshot_province_idx'),
+            models.Index(fields=['city'], name='snapshot_city_idx'),
+            models.Index(fields=['river_basin'], name='snapshot_river_idx'),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['station_id'],
+                name='snapshot_station_uniq',
+            )
         ]
 
     def __str__(self):
-        return f"{self.device_id} - {self.recorded_at}"
+        return f"{self.station_id} - {self.recorded_at}"
 
 
 class Alert(models.Model):
@@ -186,8 +205,13 @@ class Alert(models.Model):
     ]
 
     # 设备标识
-    device_id = models.CharField(max_length=50, db_index=True, verbose_name='设备ID')
-    device_name = models.CharField(max_length=100, blank=True, null=True, verbose_name='设备名称/断面名称')
+    station_id = models.CharField(max_length=50, db_index=True, verbose_name='站点ID')
+    station_name = models.CharField(
+        max_length=100,
+        blank=True,
+        null=True,
+        verbose_name='站点名称/断面名称',
+    )
 
     # 告警内容 (统一字段命名)
     alert_type = models.CharField(max_length=50, choices=ALERT_TYPE_CHOICES, verbose_name='告警类型')
@@ -216,7 +240,7 @@ class Alert(models.Model):
         verbose_name_plural = '告警'
         ordering = ['-created_at']
         indexes = [
-            models.Index(fields=['device_id', '-created_at'], name='alerts_device_time_idx'),
+            models.Index(fields=['station_id', '-created_at'], name='alerts_station_time_idx'),
             models.Index(fields=['alert_type']),
             models.Index(fields=['alert_level']),
             models.Index(fields=['resolved']),
@@ -224,7 +248,7 @@ class Alert(models.Model):
         ]
 
     def __str__(self):
-        return f"[{self.alert_level}] {self.device_id} - {self.message}"
+        return f"[{self.alert_level}] {self.station_id} - {self.message}"
 
     def resolve(self):
         """标记告警为已解决"""
@@ -232,4 +256,3 @@ class Alert(models.Model):
         self.resolved = True
         self.resolved_at = timezone.now()
         self.save()
-

@@ -36,14 +36,14 @@ export function getRealtimeData(
 
 /**
  * 获取历史数据
- * @param {string} deviceId - 设备ID
+ * @param {string} stationId - 站点ID
  * @param {number} hours - 小时数
  */
-export function getHistoricalData(deviceId, hours = 24) {
+export function getHistoricalData(stationId, hours = 24) {
   return request({
     url: '/sensors/data/history/',
     method: 'get',
-    params: { device_id: deviceId, hours }
+    params: { station_id: stationId, hours }
   })
 }
 

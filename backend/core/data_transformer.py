@@ -62,11 +62,11 @@ class DataTransformer:
         cls._COMMON_CITIES = set(cities)
 
     @classmethod
-    def extract_city_from_name(cls, device_name: str, province: str = None) -> Optional[str]:
+    def extract_city_from_name(cls, station_name: str, province: str = None) -> Optional[str]:
         """从断面名称中提取城市信息
 
         Args:
-            device_name: 断面名称
+            station_name: 断面名称
             province: 省份（可选，用于缩小匹配范围）
 
         Returns:
@@ -74,14 +74,14 @@ class DataTransformer:
         """
         cls._load_common_cities()
 
-        if not device_name:
+        if not station_name:
             return None
 
-        device_name_clean = device_name.strip()
+        station_name_clean = station_name.strip()
 
         # 直接匹配完整城市名
         for city in cls._COMMON_CITIES:
-            if city in device_name_clean:
+            if city in station_name_clean:
                 return city
 
         # 尝试匹配不带后缀的城市名
@@ -89,7 +89,7 @@ class DataTransformer:
             for suffix in cls._CITY_SUFFIXES:
                 if city.endswith(suffix) and len(city) > len(suffix):
                     city_without_suffix = city[:-len(suffix)]
-                    if city_without_suffix in device_name_clean:
+                    if city_without_suffix in station_name_clean:
                         return city
 
         return None
@@ -157,14 +157,15 @@ class DataTransformer:
         Returns:
             统一格式的数据
         """
-        device_name = data.get('device_name')
+        station_name = data.get('station_name') or data.get('device_name')
         province = data.get('province')
         city = data.get('city')
+        station_id = data.get('station_id') or data.get('device_id')
 
         transformed = {
             'data_source': source,
-            'device_id': data.get('device_id'),
-            'device_name': device_name,
+            'station_id': station_id,
+            'station_name': station_name,
             'location': data.get('location'),
             'timestamp': data.get('timestamp') or data.get('recorded_at'),
             'city': city,
@@ -256,7 +257,7 @@ class DataTransformer:
 
         # 尝试从断面名称中提取城市信息（仅当原始数据中没有城市时）
         if not transformed.get('city'):
-            city = cls.extract_city_from_name(device_name, province)
+            city = cls.extract_city_from_name(station_name, province)
             if city:
                 transformed['city'] = city
 
@@ -277,10 +278,12 @@ class DataTransformer:
         alert_type = data.get('alert_type') or data.get('type')
         alert_level = data.get('alert_level') or data.get('level')
         created_at = data.get('created_at') or data.get('timestamp')
+        station_id = data.get('station_id') or data.get('device_id')
+        station_name = data.get('station_name') or data.get('device_name')
 
         return {
-            'device_id': data.get('device_id'),
-            'device_name': data.get('device_name'),
+            'station_id': station_id,
+            'station_name': station_name,
             'alert_type': cls.normalize_alert_type(alert_type),
             'alert_level': cls.normalize_alert_level(alert_level),
             'message': data.get('message', '数据异常'),
@@ -294,9 +297,11 @@ class DataTransformer:
     @classmethod
     def transform_device(cls, data: Dict[str, Any], source: str) -> Dict[str, Any]:
         """转换设备数据为统一格式"""
+        station_id = data.get('station_id') or data.get('device_id')
+        station_name = data.get('station_name') or data.get('device_name', station_id)
         return {
-            'device_id': data.get('device_id'),
-            'device_name': data.get('device_name', data.get('device_id')),
+            'station_id': station_id,
+            'station_name': station_name,
             'device_type': data.get('device_type', 'sensor'),
             'location': data.get('location'),
             'province': data.get('province'),
@@ -398,8 +403,8 @@ class DatabaseSync:
         from django.utils import timezone
         from apps.sensors.models import SensorData
 
-        device_id = data.get('device_id')
-        if not device_id:
+        station_id = data.get('station_id') or data.get('device_id')
+        if not station_id:
             return None
 
         # 解析时间
@@ -409,8 +414,8 @@ class DatabaseSync:
 
         # 准备数据
         sensor_data = {
-            'device_id': device_id,
-            'device_name': data.get('device_name', device_id),
+            'station_id': station_id,
+            'station_name': data.get('station_name', data.get('device_name', station_id)),
             'temperature': DataTransformer._to_float(data.get('temperature')),
             'ph': DataTransformer._to_float(data.get('ph')),
             'dissolved_oxygen': DataTransformer._to_float(data.get('dissolved_oxygen')),
@@ -437,8 +442,8 @@ class DatabaseSync:
         from datetime import datetime
         from apps.sensors.models import Alert
 
-        device_id = alert_data.get('device_id')
-        if not device_id:
+        station_id = alert_data.get('station_id') or alert_data.get('device_id')
+        if not station_id:
             return None
 
         # 解析时间
@@ -448,8 +453,8 @@ class DatabaseSync:
 
         # 准备数据
         alert = {
-            'device_id': device_id,
-            'device_name': alert_data.get('device_name', device_id),
+            'station_id': station_id,
+            'station_name': alert_data.get('station_name', alert_data.get('device_name', station_id)),
             'alert_type': DataTransformer.normalize_alert_type(alert_data.get('alert_type') or alert_data.get('type')),
             'alert_level': DataTransformer.normalize_alert_level(alert_data.get('alert_level') or alert_data.get('level')),
             'message': alert_data.get('message', '数据异常'),

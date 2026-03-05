@@ -187,19 +187,38 @@ class AmapGeocodingService:
         """批量地理编码：为多个断面获取经纬度
 
         Args:
-            sections: 断面名称列表
-            city: 城市
-            province: 省份
+            sections: 断面列表，支持字符串名称或包含 name/city/province/key 的字典
+            city: 默认城市
+            province: 默认省份
 
         Returns:
-            字典，键为断面名称，值为(经度, 纬度)元组
+            字典，键为断面标识，值为(经度, 纬度)元组
         """
         results = {}
 
         for section_name in sections:
-            coords = self.geocode_section(section_name, province, city)
+            if isinstance(section_name, dict):
+                name = section_name.get("name") or section_name.get("station_name") or section_name.get("device_name")
+                key = (
+                    section_name.get("key")
+                    or section_name.get("station_id")
+                    or section_name.get("device_id")
+                    or name
+                )
+                section_city = section_name.get("city") or city
+                section_province = section_name.get("province") or province
+            else:
+                name = section_name
+                key = section_name
+                section_city = city
+                section_province = province
+
+            if not name:
+                continue
+
+            coords = self.geocode_section(name, section_province, section_city)
             if coords:
-                results[section_name] = coords
+                results[key] = coords
             # 避免请求过快
             time.sleep(0.3)
 

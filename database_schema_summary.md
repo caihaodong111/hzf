@@ -5,24 +5,18 @@
 ## 业务数据
 
 ### alerts
-- 告警表：告警类型/级别、消息、指标值、处理状态、来源与设备信息。
-- 关键字段：`alert_type`、`alert_level`、`message`、`value`、`resolved`、`resolved_at`、`data_source`、`device_id`、`device_name`、`created_at`。
+- 告警表：告警类型/级别、消息、指标值、处理状态、来源与站点信息。
+- 关键字段：`alert_type`、`alert_level`、`message`、`value`、`resolved`、`resolved_at`、`data_source`、`station_id`、`station_name`、`created_at`。
 
 ### sensor_data
 - 实时原始传感器数据（带采集时间）。
-- 关键字段：`device_id`、`device_name`、`recorded_at`、`data_source`、`temperature`、`ph`、`dissolved_oxygen`、`conductivity`、`turbidity`、`salinity`、`water_quality`、`permanganate`、`ammonia_nitrogen`、`total_phosphorus`、`total_nitrogen`、`chlorophyll_a`、`algae_density`。
+- 关键字段：`station_id`、`station_name`、`recorded_at`、`data_source`、`temperature`、`ph`、`dissolved_oxygen`、`conductivity`、`turbidity`、`salinity`、`water_quality`、`permanganate`、`ammonia_nitrogen`、`total_phosphorus`、`total_nitrogen`、`chlorophyll_a`、`algae_density`。
 
-### sensor_data_snapshot
-- 实时数据快照（定时落库，用于看板/历史回放）。
-- 关键字段：`device_id`、`device_name`、`snapshot_time`、`data_source`、`location`、`province`、`river_basin`、`city` + 与 `sensor_data` 类似的水质指标字段。
-- 约束：`device_id` + `snapshot_time` 唯一。
-- 索引：`device_id`、`snapshot_time`、`data_source`、`province`、`city`、`river_basin`、`device_name`、`location`、`water_quality`。
-
-### sensor_data_realtime
-- 实时最新数据表（每个设备+数据源仅保留一条最新记录）。
-- 关键字段：`device_id`、`data_source`、`recorded_at`、`updated_at`、`device_name`、`location`、`province`、`city`、`river_basin` + 与 `sensor_data` 类似的水质指标字段。
-- 约束：`device_id` + `data_source` 唯一。
-- 索引：`device_id`+`data_source`、`recorded_at`、`province`、`city`、`river_basin`、`water_quality`。
+### sensor_data_latest
+- 实时最新快照表（每个站点+来源仅保留一条最新记录）。
+- 关键字段：`station_id`、`station_name`、`recorded_at`、`updated_at`、`data_source`、`location`、`province`、`river_basin`、`city` + 与 `sensor_data` 类似的水质指标字段。
+- 约束：`station_id` 唯一。
+- 索引：`station_id`、`recorded_at`、`province`、`city`、`river_basin`。
 - 写入方式：`sync_realtime_data` 管理命令或 `POST /api/v1/sensors/data/sync_realtime/` 手动触发。
 
 ### dashboard_datasourcepreference

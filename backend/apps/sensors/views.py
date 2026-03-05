@@ -9,10 +9,10 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.utils import timezone
 from datetime import timedelta
-from django.db.models import Avg, Count, Q, F, Max
+from django.db.models import Q
 from django.db.models.functions import Coalesce
 
-from .models import ManualSensorData, SensorData, Alert
+from .models import SensorData, SensorSnapshot, Alert
 from .serializers import (
     SensorDataSerializer, RealtimeDataSerializer,
     HistoricalDataSerializer, AlertSerializer, DashboardSummarySerializer
@@ -21,7 +21,7 @@ from core.open_data_provider import OpenWaterDataService, fetch_records
 from core.national_water_data import NationalWaterDataService
 from core.huawei_water_data import HuaweiWaterDataService
 from core.data_transformer import DataTransformer
-from core.data_source_preference import get_data_source_priority, get_data_source_mode
+from core.data_source_preference import get_allowed_sources, get_data_source_priority, get_data_source_mode
 from core.realtime_store import sync_realtime_data
 from core.city_matcher import matches_city
 from core.city_resolver import infer_city_name, resolve_area_name
@@ -32,7 +32,7 @@ def _compute_data_version(sensors):
     ordered = sorted(
         sensors,
         key=lambda item: (
-            item.get("device_id") or "",
+            item.get("station_id") or "",
             str(item.get("timestamp") or "")
         ),
     )
@@ -41,7 +41,7 @@ def _compute_data_version(sensors):
         if not isinstance(timestamp, str):
             timestamp = str(timestamp or "")
         parts = [
-            sensor.get("device_id") or "",
+            sensor.get("station_id") or "",
             timestamp or "",
             sensor.get("water_quality") or "",
             str(sensor.get("temperature") or ""),
@@ -60,10 +60,10 @@ class SensorDataViewSet(viewsets.ReadOnlyModelViewSet):
 
     def get_queryset(self):
         queryset = super().get_queryset()
-        device_id = self.request.query_params.get('device_id')
+        station_id = self.request.query_params.get('station_id') or self.request.query_params.get('device_id')
 
-        if device_id:
-            queryset = queryset.filter(device_id=device_id)
+        if station_id:
+            queryset = queryset.filter(station_id=station_id)
 
         # 默认返回最近24小时的数据
         hours = int(self.request.query_params.get('hours', 24))
@@ -83,20 +83,25 @@ class SensorDataViewSet(viewsets.ReadOnlyModelViewSet):
         force_refresh = str(request.query_params.get('force_refresh', '')).lower() in ('1', 'true', 'yes')
         last_version = request.query_params.get('last_version', '')
         manual_mode = get_data_source_mode() == 'manual'
-        base_queryset = ManualSensorData.objects.all() if manual_mode else SensorData.objects.all()
+        allowed_sources = get_allowed_sources()
+        base_queryset = SensorSnapshot.objects.all()
+        if allowed_sources:
+            base_queryset = base_queryset.filter(data_source__in=allowed_sources)
 
         use_source_filter = (not manual_mode) and (area_id or river_id or search_name or city_name)
         source_filter_applied = False
         if use_source_filter:
-            device_ids = set()
+            station_ids = set()
             source_available = False
             if HuaweiWaterDataService.enabled():
                 source_available = True
                 try:
                     from core.huawei_water_data import fetch_records as huawei_fetch_records
                     huawei_records = huawei_fetch_records()
-                    device_ids.update(
-                        record.device_id for record in huawei_records if getattr(record, "device_id", None)
+                    station_ids.update(
+                        (getattr(record, "station_id", None) or getattr(record, "device_id", None))
+                        for record in huawei_records
+                        if getattr(record, "station_id", None) or getattr(record, "device_id", None)
                     )
                 except Exception:
                     pass
@@ -111,8 +116,10 @@ class SensorDataViewSet(viewsets.ReadOnlyModelViewSet):
                         force_refresh=force_refresh,
                         max_pages=10,
                     )
-                    device_ids.update(
-                        record.device_id for record in records if getattr(record, "device_id", None)
+                    station_ids.update(
+                        (getattr(record, "station_id", None) or getattr(record, "device_id", None))
+                        for record in records
+                        if getattr(record, "station_id", None) or getattr(record, "device_id", None)
                     )
                 except Exception:
                     pass
@@ -134,21 +141,23 @@ class SensorDataViewSet(viewsets.ReadOnlyModelViewSet):
                                 if search_lower in (record.device_name or "").lower()
                                 or search_lower in (record.location or "").lower()
                             ]
-                    device_ids.update(
-                        record.device_id for record in open_records if getattr(record, "device_id", None)
+                    station_ids.update(
+                        (getattr(record, "station_id", None) or getattr(record, "device_id", None))
+                        for record in open_records
+                        if getattr(record, "station_id", None) or getattr(record, "device_id", None)
                     )
                 except Exception:
                     pass
             if source_available:
                 source_filter_applied = True
-                if device_ids:
-                    base_queryset = base_queryset.filter(device_id__in=device_ids)
+                if station_ids:
+                    base_queryset = base_queryset.filter(station_id__in=station_ids)
                 else:
                     base_queryset = base_queryset.none()
 
         if not source_filter_applied:
             if search_name:
-                base_queryset = base_queryset.filter(device_name__icontains=search_name)
+                base_queryset = base_queryset.filter(station_name__icontains=search_name)
             area_name = resolve_area_name(area_id)
             if area_name:
                 if area_id.endswith("0000"):
@@ -157,7 +166,7 @@ class SensorDataViewSet(viewsets.ReadOnlyModelViewSet):
                     base_queryset = base_queryset.filter(
                         Q(city__icontains=area_name) |
                         Q(location__icontains=area_name) |
-                        Q(device_name__icontains=area_name) |
+                        Q(station_name__icontains=area_name) |
                         Q(province__icontains=area_name)
                     )
             if river_id:
@@ -165,24 +174,15 @@ class SensorDataViewSet(viewsets.ReadOnlyModelViewSet):
 
         city_post_filter = bool(city_name) and not source_filter_applied
 
-        latest_records = base_queryset.exclude(device_id__isnull=True).values('device_id').annotate(
-            latest_time=Max('recorded_at')
-        ).order_by('-latest_time')
-
         sensors = []
         latest_time = None
-        for item in latest_records:
-            record = base_queryset.filter(
-                device_id=item['device_id'],
-                recorded_at=item['latest_time']
-            ).first()
-            if not record:
-                continue
+        snapshot_queryset = base_queryset.exclude(station_id__isnull=True).order_by('-recorded_at')
+        for record in snapshot_queryset:
             if not latest_time or record.recorded_at > latest_time:
                 latest_time = record.recorded_at
             transformed = DataTransformer.transform_realtime_data({
-                'device_id': record.device_id,
-                'device_name': record.device_name,
+                'station_id': record.station_id,
+                'station_name': record.station_name,
                 'location': record.location,
                 'province': record.province,
                 'city': record.city,
@@ -206,11 +206,11 @@ class SensorDataViewSet(viewsets.ReadOnlyModelViewSet):
             }, 'database')
             if not transformed.get("city"):
                 transformed["city"] = infer_city_name(
-                    (transformed.get("device_name"), transformed.get("location")),
+                    (transformed.get("station_name"), transformed.get("location")),
                     transformed.get("province") or "",
-                    transformed.get("device_id") or ""
+                    transformed.get("station_id") or ""
                 )
-            transformed["data_source"] = "manual" if manual_mode else (record.data_source or "auto")
+            transformed["data_source"] = record.data_source or ("manual" if manual_mode else "auto")
             transformed["_recorded_at"] = record.recorded_at
             sensors.append(transformed)
 
@@ -221,7 +221,7 @@ class SensorDataViewSet(viewsets.ReadOnlyModelViewSet):
                     city_name,
                     (
                         sensor.get("location"),
-                        sensor.get("device_name"),
+                        sensor.get("station_name"),
                         sensor.get("city"),
                         sensor.get("province"),
                     )
@@ -271,21 +271,23 @@ class SensorDataViewSet(viewsets.ReadOnlyModelViewSet):
     @action(detail=False, methods=['get'])
     def history(self, request):
         """获取历史数据 - 从数据库历史表中读取"""
-        device_id = request.query_params.get('device_id')
+        station_id = request.query_params.get('station_id') or request.query_params.get('device_id')
         hours = int(request.query_params.get('hours', 24))
 
         time_threshold = timezone.now() - timedelta(hours=hours)
 
         manual_mode = get_data_source_mode() == 'manual'
-        target_model = ManualSensorData if manual_mode else SensorData
-        sensor_qs = target_model.objects.filter(recorded_at__gte=time_threshold).order_by('recorded_at')
-        if device_id:
-            sensor_qs = sensor_qs.filter(device_id=device_id)
+        allowed_sources = get_allowed_sources()
+        sensor_qs = SensorData.objects.filter(recorded_at__gte=time_threshold).order_by('recorded_at')
+        if allowed_sources:
+            sensor_qs = sensor_qs.filter(data_source__in=allowed_sources)
+        if station_id:
+            sensor_qs = sensor_qs.filter(station_id=station_id)
         else:
             first_record = sensor_qs.first()
             if first_record:
-                device_id = first_record.device_id
-                sensor_qs = sensor_qs.filter(device_id=device_id)
+                station_id = first_record.station_id
+                sensor_qs = sensor_qs.filter(station_id=station_id)
 
         history_data = []
         for record in sensor_qs:
@@ -313,7 +315,7 @@ class SensorDataViewSet(viewsets.ReadOnlyModelViewSet):
             'code': 200,
             'message': 'success',
             'data': {
-                'device_id': device_id,
+                'station_id': station_id,
                 'data_source': data_source,
                 'data': history_data,
                 'count': len(history_data)
@@ -329,13 +331,13 @@ class AlertViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         queryset = super().get_queryset()
-        device_id = self.request.query_params.get('device_id')
+        station_id = self.request.query_params.get('station_id') or self.request.query_params.get('device_id')
         alert_type = self.request.query_params.get('alert_type')
         alert_level = self.request.query_params.get('alert_level')
         resolved = self.request.query_params.get('resolved')
 
-        if device_id:
-            queryset = queryset.filter(device_id=device_id)
+        if station_id:
+            queryset = queryset.filter(station_id=station_id)
         if alert_type:
             queryset = queryset.filter(alert_type=alert_type)
         if alert_level:
