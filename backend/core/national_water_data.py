@@ -25,28 +25,6 @@ from core.data_transformer import DataTransformer
 
 logger = logging.getLogger(__name__)
 
-# Page/request keys used by the national site.
-PAGE_KEYS = [
-    "page",
-    "pageIndex",
-    "pageindex",
-    "pageNo",
-    "pageNum",
-    "current",
-    "PageIndex",
-    "Page",
-]
-SIZE_KEYS = [
-    "rows",
-    "row",
-    "pageSize",
-    "pagesize",
-    "page_size",
-    "size",
-    "limit",
-    "PageSize",
-]
-
 COMMON_JS_URL = "https://szzdjc.cnemc.cn:8070/GJZ/Scripts/Publish/Common.js?v2.1"
 MUNICIPALITIES = {"北京市", "天津市", "上海市", "重庆市"}
 
@@ -412,185 +390,6 @@ class NationalWaterDataAPI:
                 entries.append((province_name, province_code, city_name, city_code))
         return entries
 
-    def _parse_post_data(self, headers: Dict[str, str], post_data: str) -> Dict[str, str]:
-        content_type = headers.get("content-type", "")
-        if post_data.strip().startswith("{") or "application/json" in content_type:
-            try:
-                data = json.loads(post_data)
-                return {str(k): str(v) for k, v in data.items()}
-            except Exception:
-                return {}
-        if "=" in post_data:
-            parsed = urllib.parse.parse_qs(post_data, keep_blank_values=True)
-            return {k: v[-1] if v else "" for k, v in parsed.items()}
-        return {}
-
-    def _find_key_by_value(self, data: Dict[str, str], candidates: List[str], target: int) -> Optional[str]:
-        for key in candidates:
-            if key in data:
-                try:
-                    if int(float(data[key])) == target:
-                        return key
-                except Exception:
-                    continue
-        return None
-
-    def _build_post_body(self, fields: Dict[str, str], content_type: str) -> str:
-        if "application/json" in content_type.lower():
-            return json.dumps(fields, ensure_ascii=False)
-        return urllib.parse.urlencode(fields)
-
-    def _fetch_pages(
-        self,
-        area_id: str,
-        river_id: str,
-        search_name: str,
-        city_name: str,
-        max_pages: int,
-        wait_ms: int,
-        timeout_ms: int,
-        headless: bool,
-    ) -> Optional[Dict[str, Any]]:
-        try:
-            from playwright.sync_api import sync_playwright
-        except Exception as exc:
-            logger.warning(f"Playwright 未安装或不可用: {exc}")
-            return None
-
-        found = {
-            "data": None,
-            "req_headers": None,
-            "post_data": None,
-            "api_url": None,
-        }
-
-        def _handle_response(resp):
-            if "GJZ/Ajax/Publish.ashx" not in resp.url:
-                return
-            try:
-                text = resp.text()
-            except Exception:
-                return
-            try:
-                data = json.loads(text)
-            except Exception:
-                return
-            if isinstance(data, dict) and "tbody" in data and found["data"] is None:
-                req = resp.request
-                found["data"] = data
-                found["req_headers"] = req.headers or {}
-                found["post_data"] = req.post_data or ""
-                found["api_url"] = req.url
-
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=headless, args=["--disable-http2"])
-            context = browser.new_context(
-                ignore_https_errors=True,
-                user_agent=(
-                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/121.0.0.0 Safari/537.36"
-                ),
-            )
-            page = context.new_page()
-            page.set_default_navigation_timeout(timeout_ms)
-            page.set_default_timeout(timeout_ms)
-            page.on("response", _handle_response)
-
-            page.goto(self.PAGE_URL, wait_until="networkidle")
-            page.wait_for_timeout(wait_ms)
-
-            if not isinstance(found["data"], dict) or "tbody" not in found["data"]:
-                browser.close()
-                logger.warning("国家水质数据获取失败: 未捕获到 Publish.ashx 数据响应")
-                return None
-
-            req_headers = found["req_headers"] or {}
-            post_fields = self._parse_post_data(req_headers, found["post_data"] or "")
-            content_type = req_headers.get(
-                "content-type", "application/x-www-form-urlencoded; charset=UTF-8"
-            )
-            api_url = found["api_url"] or self.API_URL
-
-            post_fields["AreaID"] = area_id or ""
-            post_fields["RiverID"] = river_id or ""
-            post_fields["MNName"] = search_name or ""
-
-            if city_name:
-                city_code = CITY_CODES.get(city_name, "")
-                if city_code:
-                    post_fields["AreaID"] = city_code
-                    logger.info(f"城市筛选: {city_name} -> AreaID={city_code}")
-                else:
-                    if not search_name:
-                        post_fields["MNName"] = city_name
-                    logger.warning(f"未找到城市代码: {city_name}，尝试断面名称搜索")
-
-            page_key = self._find_key_by_value(post_fields, PAGE_KEYS, 1) or "PageIndex"
-
-            def _fetch_page(page_num: int) -> Optional[Dict[str, Any]]:
-                post_fields[page_key] = str(page_num)
-                body = self._build_post_body(post_fields, content_type)
-                resp_info = page.evaluate(
-                    """async ({ url, body, contentType }) => {
-                        const resp = await fetch(url, {
-                            method: "POST",
-                            headers: {
-                                "Content-Type": contentType,
-                                "X-Requested-With": "XMLHttpRequest"
-                            },
-                            body,
-                            credentials: "include"
-                        });
-                        const text = await resp.text();
-                        return { status: resp.status, text };
-                    }""",
-                    {"url": api_url, "body": body, "contentType": content_type},
-                )
-                if resp_info.get("status") != 200:
-                    return None
-                raw_text = resp_info.get("text", "")
-                try:
-                    return json.loads(raw_text)
-                except Exception:
-                    return None
-
-            first_page = _fetch_page(1)
-            if not isinstance(first_page, dict) or "tbody" not in first_page:
-                browser.close()
-                logger.warning("国家水质数据获取失败: 无法解析第一页数据")
-                return None
-
-            all_rows = list(first_page.get("tbody", []))
-            thead = first_page.get("thead", [])
-            total_pages = int(first_page.get("total") or 0)
-            total_records = int(first_page.get("records") or 0)
-            rows_per_page = len(all_rows) if all_rows else 0
-            if not total_pages and rows_per_page:
-                total_pages = math.ceil(total_records / rows_per_page) if total_records else 1
-            if not total_pages:
-                total_pages = 1
-
-            max_page_limit = max_pages if max_pages > 0 else total_pages
-            for page_num in range(2, min(total_pages, max_page_limit) + 1):
-                page_data = _fetch_page(page_num)
-                if not isinstance(page_data, dict):
-                    break
-                page_rows = page_data.get("tbody", [])
-                if not page_rows:
-                    break
-                all_rows.extend(page_rows)
-
-            browser.close()
-
-        return {
-            "thead": thead,
-            "tbody": all_rows,
-            "total": total_pages,
-            "records": total_records,
-            "result": 1,
-        }
-
     def _clean_value(self, value: Any, col_index: int = None) -> Any:
         """清理数据值"""
         if not value or value == "--":
@@ -743,10 +542,8 @@ class NationalWaterDataAPI:
     ) -> List[WaterQualityRecord]:
         """获取水质数据记录
 
-        注意：城市筛选通过 AreaID 参数实现
-        - 省级代码：6位，后4位为0000，如 110000（北京市）
-        - 市级代码：6位，后2位为00，如 440100（广州市）
-        - 区县级代码：6位，如 110108（海淀区）
+        已移除 Playwright 分页抓取路径；统一使用 `action=getRealDatas` 直连接口。
+        注意：该模式在不指定 city/area 时，不保证能返回“全量全国数据”，用于筛选/查询场景即可。
         """
         # 有筛选条件时禁用缓存
         has_filters = bool(area_id or river_id or search_name or city_name)
@@ -755,25 +552,40 @@ class NationalWaterDataAPI:
         if not has_filters and not force_refresh and self._cache_valid():
             return self._cache.get("records", [])
 
-        data = self._fetch_pages(
-            area_id=area_id,
-            river_id=river_id,
-            search_name=search_name,
-            city_name=city_name,
-            max_pages=max_pages,
-            wait_ms=int(getattr(settings, "NATIONAL_WATER_DATA_WAIT_MS", 8000)),
-            timeout_ms=int(getattr(settings, "NATIONAL_WATER_DATA_TIMEOUT_MS", 60000)),
-            headless=not bool(getattr(settings, "NATIONAL_WATER_DATA_HEADED", False)),
+        city_for_records: str | None = None
+        effective_area_id = area_id or ""
+        effective_search = search_name or ""
+        if city_name:
+            city_code = CITY_CODES.get(city_name, "")
+            if city_code:
+                effective_area_id = city_code
+                city_for_records = city_name
+                logger.info("城市筛选: %s -> AreaID=%s", city_name, city_code)
+            else:
+                if not effective_search:
+                    effective_search = city_name
+                logger.warning("未找到城市代码: %s，尝试断面名称搜索", city_name)
+
+        payload = {
+            "action": "getRealDatas",
+            "AreaID": effective_area_id,
+            "RiverID": river_id or "",
+            "MNName": effective_search,
+            "PageIndex": "1",
+            "PageSize": "9999",
+        }
+        data = self._http_post_form_json(
+            self.API_URL,
+            payload,
+            timeout=int(getattr(settings, "NATIONAL_WATER_CITY_TIMEOUT_S", 30)),
         )
-        if not data or not data.get("result"):
-            if city_name:
-                logger.warning(f"城市 '{city_name}' 没有获取到数据")
+        tbody = data.get("tbody", []) or []
+        if not isinstance(tbody, list) or not tbody:
             return []
 
-        tbody = data.get("tbody", []) or []
         all_records = []
         for row in tbody:
-            record = self._parse_record(row)
+            record = self._parse_record(row, city=city_for_records)
             if record:
                 all_records.append(record)
 
@@ -955,6 +767,14 @@ class NationalWaterDataService:
         if not records:
             return {"timestamp": dj_timezone.now().isoformat(), "sensors": []}
 
+        if with_city and not has_filters:
+            missing_city_records = sum(1 for r in records if not (getattr(r, "city", None) or "").strip())
+            logger.info(
+                "国家水质按城市抓取完成(记录级): records=%s missing_city=%s",
+                len(records),
+                missing_city_records,
+            )
+
         # 按设备分组，取最新数据
         latest_by_device: Dict[str, WaterQualityRecord] = {}
         for record in records:
@@ -994,6 +814,14 @@ class NationalWaterDataService:
                 "algae_density": record.algae_density,
                 "timestamp": record.timestamp.isoformat(),
             })
+
+        if with_city and not has_filters:
+            missing_city_sensors = sum(1 for s in sensors if not (s.get("city") or "").strip())
+            logger.info(
+                "国家水质按城市抓取完成(传感器级): sensors=%s missing_city=%s",
+                len(sensors),
+                missing_city_sensors,
+            )
 
         return {
             "timestamp": dj_timezone.now().isoformat(),

@@ -65,6 +65,9 @@ def _fetch_realtime(source: str, count: int) -> List[Dict[str, Any]]:
 
 def _fetch_realtime_with_city(source: str, count: int, with_city: bool) -> List[Dict[str, Any]]:
     if source == "national":
+        if not with_city:
+            logger.info("national 数据源强制启用 with_city=True（已移除非城市抓取路径）")
+            with_city = True
         result = NationalWaterDataService.get_realtime(
             count=count,
             force_refresh=True,
@@ -166,6 +169,16 @@ def sync_realtime_data(
         transformed["province"] = province_name
         transformed["city"] = city_name
         transformed_sensors.append(transformed)
+
+    missing_city_transformed = sum(
+        1 for s in transformed_sensors if not (s.get("city") or "").strip()
+    )
+    logger.info(
+        "转换完成: sensors=%s missing_city=%s with_city=%s",
+        len(transformed_sensors),
+        missing_city_transformed,
+        with_city,
+    )
 
     station_ids = [sensor.get("station_id") for sensor in transformed_sensors if sensor.get("station_id")]
     to_create = []
