@@ -31,6 +31,13 @@ class DataTransformer:
         if cls._COMMON_CITIES:
             return
 
+        extra_cities: Set[str] = set()
+        try:
+            from core.national_water_data import CITY_CODES
+            extra_cities = set(CITY_CODES.keys())
+        except Exception:
+            extra_cities = set()
+
         # 主要城市列表（来自前端的provinceCascadeOptions）
         cities = [
             # 直辖市
@@ -59,7 +66,7 @@ class DataTransformer:
             '兰州市', '天水市', '酒泉市', '张掖市', '武威市',
             '西宁市', '银川市', '乌鲁木齐市', '克拉玛依市',
         ]
-        cls._COMMON_CITIES = set(cities)
+        cls._COMMON_CITIES = set(cities) | extra_cities
 
     @classmethod
     def extract_city_from_name(cls, station_name: str, province: str = None) -> Optional[str]:

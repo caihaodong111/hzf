@@ -1,0 +1,44 @@
+{
+  "https://szzdjc.cnemc.cn:8070/GJZ/Business/Publish/Main.html": {
+    "method": "GET",
+    "status": 200,
+    "content_type": "text/html",
+    "saved_as": "responses/GJZ_Business_Publish_Main.html.txt"
+  },
+  "https://szzdjc.cnemc.cn:8070/UILib/artDialog/skins/blue.css": {
+    "method": "GET",
+    "status": 200,
+    "content_type": "text/css",
+    "saved_as": "responses/UILib_artDialog_skins_blue.css.txt"
+  },
+  "https://szzdjc.cnemc.cn:8070/GJZ/Styles/Publish/Publish.css": {
+    "method": "GET",
+    "status": 200,
+    "content_type": "text/css",
+    "saved_as": "responses/GJZ_Styles_Publish_Publish.css.txt"
+  },
+  "https://szzdjc.cnemc.cn:8070/GJZ/Business/Publish/RealDatas.html": {
+    "method": "GET",
+    "status": 200,
+    "content_type": "text/html",
+    "saved_as": "responses/GJZ_Business_Publish_RealDatas.html.txt"
+  },
+  "https://szzdjc.cnemc.cn:8070/GJZ/Styles/Publish/Publish.css?v1.1": {
+    "method": "GET",
+    "status": 200,
+    "content_type": "text/css",
+    "saved_as": "responses/GJZ_Styles_Publish_Publish.css_1f5327f235.txt"
+  },
+  "https://szzdjc.cnemc.cn:8070/UILib/bootstrap/css/bootstrap.min.css": {
+    "method": "GET",
+    "status": 200,
+    "content_type": "text/css",
+    "saved_as": "responses/UILib_bootstrap_css_bootstrap.min.css.txt"
+  },
+  "https://szzdjc.cnemc.cn:8070/GJZ/Ajax/Publish.ashx": {
+    "method": "POST",
+    "status": 200,
+    "content_type": "text/plain; charset=utf-8",
+    "saved_as": "responses/GJZ_Ajax_Publish.ashx.txt"
+  }
+}

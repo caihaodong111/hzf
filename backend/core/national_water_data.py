@@ -18,6 +18,7 @@ from django.conf import settings
 from django.utils import timezone as dj_timezone
 
 from core.city_matcher import matches_city
+from core.data_transformer import DataTransformer
 
 logger = logging.getLogger(__name__)
 
@@ -530,10 +531,12 @@ class NationalWaterDataService:
         search_name = filters.get("search_name", "")
         city_name = filters.get("city_name", "")
         force_refresh = bool(filters.get("force_refresh", False))
+        max_pages = int(filters.get("max_pages", 200))
 
-        # 有筛选条件时获取更多页数
+        # 有筛选条件时获取更多页数（由 max_pages 控制上限）
         has_filters = bool(area_id or river_id or search_name or city_name)
-        max_pages = 10 if has_filters else 3
+        if has_filters and not filters.get("max_pages"):
+            max_pages = 200
 
         records = _api_instance.fetch_records(
             area_id=area_id,
@@ -562,11 +565,13 @@ class NationalWaterDataService:
 
         sensors = []
         for record in latest_records:
+            city = DataTransformer.extract_city_from_name(record.device_name, record.province)
             sensors.append({
                 "device_id": record.device_id,
                 "device_name": record.device_name,
                 "location": record.location,
                 "province": record.province,
+                "city": city,
                 "river_basin": record.river_basin,
                 "water_quality": record.water_quality,
                 "temperature": record.temperature,

@@ -1,0 +1,16 @@
+{
+  "api_url": "https://szzdjc.cnemc.cn:8070/GJZ/Ajax/Publish.ashx",
+  "post_fields": {
+    "AreaID": "",
+    "RiverID": "",
+    "MNName": "",
+    "PageIndex": "1",
+    "PageSize": "60",
+    "action": "getRealDatas"
+  },
+  "page_key": "PageIndex",
+  "size_key": null,
+  "rows_per_page": 45,
+  "total_records": 1875,
+  "start_page": 1
+}
