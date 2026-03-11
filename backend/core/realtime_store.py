@@ -8,6 +8,7 @@ from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
+from django.conf import settings
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
@@ -62,6 +63,16 @@ def _fetch_realtime(source: str, count: int) -> List[Dict[str, Any]]:
         return result.get("sensors", [])
     return []
 
+def _fetch_realtime_with_city(source: str, count: int, with_city: bool) -> List[Dict[str, Any]]:
+    if source == "national":
+        result = NationalWaterDataService.get_realtime(
+            count=count,
+            force_refresh=True,
+            with_city=with_city,
+        )
+        return result.get("sensors", [])
+    return _fetch_realtime(source, count)
+
 
 def _pick_source(preferred: Optional[str], count: int) -> Tuple[str, List[Dict[str, Any]]]:
     if preferred:
@@ -73,11 +84,26 @@ def _pick_source(preferred: Optional[str], count: int) -> Tuple[str, List[Dict[s
             return source, sensors
     return "none", []
 
+def _pick_source_with_city(
+    preferred: Optional[str],
+    count: int,
+    with_city: bool,
+) -> Tuple[str, List[Dict[str, Any]]]:
+    if preferred:
+        sensors = _fetch_realtime_with_city(preferred, count, with_city)
+        return preferred, sensors
+    for source in get_data_source_priority():
+        sensors = _fetch_realtime_with_city(source, count, with_city)
+        if sensors:
+            return source, sensors
+    return "none", []
+
 
 def sync_realtime_data(
     source: Optional[str] = None,
     count: int = 1000,
     manual: bool = False,
+    with_city: bool = False,
 ) -> Dict[str, Any]:
     """Fetch realtime data and store into auto/manual history tables."""
     normalized_source = (source or "").strip().lower() or None
@@ -101,7 +127,7 @@ def sync_realtime_data(
             "results": results,
         }
 
-    selected_source, sensors = _pick_source(normalized_source, count)
+    selected_source, sensors = _pick_source_with_city(normalized_source, count, with_city)
     if not sensors:
         logger.warning(f"数据源 {selected_source} 未获取到传感器数据")
         return {"source": selected_source, "created": 0, "updated": 0}
@@ -164,24 +190,40 @@ def sync_realtime_data(
             for row in existing_qs.values(*signature_fields):
                 existing_signatures.add(_build_signature(row, signature_fields))
 
-    # 获取经纬度映射（批量获取以提高效率）
-    logger.info("开始获取断面经纬度坐标...")
-    amap_service = get_amap_service()
-    section_coords = amap_service.batch_geocode_sections(
-        [
-            {
-                "key": s.get("station_id"),
-                "name": s.get("station_name"),
-                "province": s.get("province"),
-                "city": s.get("city"),
-            }
-            for s in transformed_sensors
-            if s.get("station_id") and s.get("station_name")
-        ],
-        province=None,
-        city=None
-    )
-    logger.info(f"成功获取 {len(section_coords)}/{len(transformed_sensors)} 个断面的经纬度")
+    section_coords: Dict[str, Tuple[float, float]] = {}
+    # with_city 场景数据量很大，默认不做高德地理编码（否则会非常慢）；需要时可在 settings 中开启。
+    if with_city and not bool(getattr(settings, "AMAP_GEOCODE_ENABLED_WITH_CITY", False)):
+        logger.info("with_city=True: 跳过高德地理编码（可通过 AMAP_GEOCODE_ENABLED_WITH_CITY 开启）")
+    else:
+        geocode_enabled = bool(getattr(settings, "AMAP_GEOCODE_ENABLED", True))
+        if geocode_enabled:
+            max_sections = int(getattr(settings, "AMAP_GEOCODE_MAX_SECTIONS", 300))
+            candidates = [
+                {
+                    "key": s.get("station_id"),
+                    "name": s.get("station_name"),
+                    "province": s.get("province"),
+                    "city": s.get("city"),
+                }
+                for s in transformed_sensors
+                if s.get("station_id") and s.get("station_name")
+            ]
+            if max_sections > 0:
+                candidates = candidates[:max_sections]
+            logger.info(
+                "开始获取断面经纬度坐标: sections=%s (total=%s)",
+                len(candidates),
+                len(transformed_sensors),
+            )
+            amap_service = get_amap_service()
+            section_coords = amap_service.batch_geocode_sections(
+                candidates,
+                province=None,
+                city=None,
+            )
+            logger.info("成功获取断面经纬度坐标: %s/%s", len(section_coords), len(candidates))
+        else:
+            logger.info("高德地理编码已禁用（AMAP_GEOCODE_ENABLED=False）")
 
     for sensor in transformed_sensors:
         station_id = sensor.get("station_id")
@@ -292,8 +334,17 @@ def _sync_snapshot(transformed_sensors: List[Dict[str, Any]], store_source: str)
         }
 
         if record:
-            if record.recorded_at and payload["recorded_at"] <= record.recorded_at:
+            if record.recorded_at and payload["recorded_at"] and payload["recorded_at"] < record.recorded_at:
                 continue
+            if record.recorded_at and payload["recorded_at"] and payload["recorded_at"] == record.recorded_at:
+                needs_fill = (
+                    (not record.city and payload.get("city"))
+                    or (not record.province and payload.get("province"))
+                    or (not record.location and payload.get("location"))
+                    or (not record.river_basin and payload.get("river_basin"))
+                )
+                if not needs_fill:
+                    continue
             for key, value in payload.items():
                 setattr(record, key, value)
             to_update.append(record)

@@ -3,6 +3,7 @@
 使用数据转换层确保输出格式一致
 """
 import hashlib
+import logging
 
 from rest_framework import viewsets
 from rest_framework.decorators import action
@@ -24,6 +25,8 @@ from core.data_source_preference import get_allowed_sources, get_data_source_pri
 from core.realtime_store import sync_realtime_data
 from core.city_matcher import matches_city
 from core.city_resolver import infer_city_name, resolve_area_name
+
+logger = logging.getLogger(__name__)
 
 
 def _compute_data_version(sensors):
@@ -234,11 +237,38 @@ class SensorDataViewSet(viewsets.ReadOnlyModelViewSet):
         """手动触发实时数据入库"""
         payload = request.data or {}
         source = (payload.get('source') or '').strip().lower() or None
-        count = int(payload.get('count') or 1000)
+        raw_count = payload.get('count', 1000)
+        try:
+            count = int(raw_count)
+        except (TypeError, ValueError):
+            count = 1000
         manual = payload.get('manual', True)
+        with_city = payload.get('with_city', False)
         if isinstance(manual, str):
             manual = manual.strip().lower() in ('1', 'true', 'yes')
-        result = sync_realtime_data(source=source, count=count, manual=bool(manual))
+        if isinstance(with_city, str):
+            with_city = with_city.strip().lower() in ('1', 'true', 'yes')
+        client_ip = request.META.get('HTTP_X_FORWARDED_FOR') or request.META.get('REMOTE_ADDR') or '-'
+        logger.info(
+            "sync_realtime triggered: source=%s count=%s manual=%s with_city=%s ip=%s",
+            source,
+            count,
+            bool(manual),
+            bool(with_city),
+            client_ip,
+        )
+        result = sync_realtime_data(
+            source=source,
+            count=count,
+            manual=bool(manual),
+            with_city=bool(with_city),
+        )
+        logger.info(
+            "sync_realtime finished: source=%s created=%s updated=%s",
+            result.get("source"),
+            result.get("created"),
+            result.get("updated"),
+        )
         return Response({
             'code': 200,
             'message': 'success',

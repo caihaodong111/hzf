@@ -74,15 +74,19 @@ export function getDashboardStatistics(hours = 24) {
  * @param {string} source - 指定数据源
  * @param {number} count - 拉取数量
  * @param {boolean} manual - 是否标记为手动数据
+ * @param {boolean} withCity - 国家水质按城市抓取（补 city 字段）
  */
-export function syncRealtimeData(source = '', count = 1000, manual = true) {
+export function syncRealtimeData(source = '', count = 1000, manual = true, withCity = false) {
   return request({
     url: '/sensors/data/sync_realtime/',
     method: 'post',
+    // 国家水质按城市抓取可能较慢，单独放宽超时时间
+    timeout: 600000,
     data: {
       source,
       count,
-      manual
+      manual,
+      with_city: withCity
     }
   })
 }

@@ -9,10 +9,13 @@ import json
 import logging
 import math
 import re
+import ssl
+import time
 import urllib.parse
+import urllib.request
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from django.conf import settings
 from django.utils import timezone as dj_timezone
@@ -43,6 +46,9 @@ SIZE_KEYS = [
     "limit",
     "PageSize",
 ]
+
+COMMON_JS_URL = "https://szzdjc.cnemc.cn:8070/GJZ/Scripts/Publish/Common.js?v2.1"
+MUNICIPALITIES = {"北京市", "天津市", "上海市", "重庆市"}
 
 
 # 区域代码映射
@@ -210,6 +216,7 @@ class WaterQualityRecord:
     device_name: str
     location: str
     province: str
+    city: Optional[str]
     river_basin: str
     water_quality: str  # 水质类别 Ⅰ-劣Ⅴ类
     timestamp: datetime
@@ -242,6 +249,8 @@ class NationalWaterDataAPI:
 
     def __init__(self):
         self._cache: Dict[str, Any] = {"records": None, "fetched_at": None}
+        self._city_cache: Dict[str, Any] = {"records": None, "fetched_at": None}
+        self._area_cache: Dict[str, Any] = {"area_info": None, "fetched_at": None}
         self._cache_minutes = getattr(settings, "NATIONAL_WATER_DATA_CACHE_MINUTES", 20)
 
     def _cache_valid(self) -> bool:
@@ -250,6 +259,158 @@ class NationalWaterDataAPI:
         if not fetched_at:
             return False
         return dj_timezone.now() - fetched_at < dj_timezone.timedelta(minutes=self._cache_minutes)
+
+    def _cache_city_valid(self) -> bool:
+        fetched_at = self._city_cache.get("fetched_at")
+        if not fetched_at:
+            return False
+        return dj_timezone.now() - fetched_at < dj_timezone.timedelta(minutes=self._cache_minutes)
+
+    def _cache_area_valid(self) -> bool:
+        fetched_at = self._area_cache.get("fetched_at")
+        if not fetched_at:
+            return False
+        return dj_timezone.now() - fetched_at < dj_timezone.timedelta(minutes=self._cache_minutes)
+
+    def _unverified_ssl_context(self) -> ssl.SSLContext:
+        # szzdjc.cnemc.cn:8070 的证书在部分环境可能无法通过验证，这里仅用于只读拉取公开数据。
+        return ssl._create_unverified_context()
+
+    def _http_get_text(self, url: str, timeout: int = 30) -> str:
+        req = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/121.0.0.0 Safari/537.36"
+                )
+            },
+            method="GET",
+        )
+        with urllib.request.urlopen(req, timeout=timeout, context=self._unverified_ssl_context()) as resp:
+            raw = resp.read()
+        return raw.decode("utf-8-sig", errors="replace")
+
+    def _http_post_form_json(
+        self,
+        url: str,
+        form: Dict[str, str],
+        timeout: int = 30,
+        retries: int = 2,
+        retry_sleep_s: float = 0.4,
+    ) -> Dict[str, Any]:
+        body = urllib.parse.urlencode(form).encode("utf-8")
+        last_exc: Exception | None = None
+        for attempt in range(retries + 1):
+            try:
+                req = urllib.request.Request(
+                    url,
+                    data=body,
+                    headers={
+                        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+                        "X-Requested-With": "XMLHttpRequest",
+                        "User-Agent": (
+                            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                            "AppleWebKit/537.36 (KHTML, like Gecko) "
+                            "Chrome/121.0.0.0 Safari/537.36"
+                        ),
+                    },
+                    method="POST",
+                )
+                with urllib.request.urlopen(
+                    req, timeout=timeout, context=self._unverified_ssl_context()
+                ) as resp:
+                    raw = resp.read()
+                data = json.loads(raw.decode("utf-8", errors="replace"))
+                return data if isinstance(data, dict) else {}
+            except Exception as exc:
+                last_exc = exc
+                if attempt < retries:
+                    time.sleep(retry_sleep_s)
+        raise RuntimeError(f"国家水质请求失败: {type(last_exc).__name__}: {last_exc}") from last_exc
+
+    def _extract_area_info(self, common_js_text: str) -> List[Dict[str, Any]]:
+        marker = "var _AreaInfo"
+        start = common_js_text.find(marker)
+        if start < 0:
+            raise RuntimeError("Failed to locate `_AreaInfo` in Common.js.")
+
+        bracket_start = common_js_text.find("[", start)
+        if bracket_start < 0:
+            raise RuntimeError("Failed to locate `_AreaInfo` array start in Common.js.")
+
+        depth = 0
+        in_string = False
+        escape = False
+        end = -1
+        for i in range(bracket_start, len(common_js_text)):
+            ch = common_js_text[i]
+            if in_string:
+                if escape:
+                    escape = False
+                    continue
+                if ch == "\\":
+                    escape = True
+                    continue
+                if ch == '"':
+                    in_string = False
+                continue
+
+            if ch == '"':
+                in_string = True
+                continue
+            if ch == "[":
+                depth += 1
+                continue
+            if ch == "]":
+                depth -= 1
+                if depth == 0:
+                    end = i + 1
+                    break
+
+        if end < 0:
+            raise RuntimeError("Failed to find end of `_AreaInfo` array in Common.js.")
+
+        payload = common_js_text[bracket_start:end]
+        parsed = json.loads(payload)
+        if not isinstance(parsed, list):
+            raise RuntimeError("Unexpected `_AreaInfo` format; expected list.")
+        return parsed
+
+    def _load_area_info(self, force_refresh: bool = False) -> List[Dict[str, Any]]:
+        if not force_refresh and self._cache_area_valid() and self._area_cache.get("area_info"):
+            return self._area_cache["area_info"]
+
+        text = self._http_get_text(COMMON_JS_URL, timeout=30)
+        area_info = self._extract_area_info(text)
+        self._area_cache["area_info"] = area_info
+        self._area_cache["fetched_at"] = dj_timezone.now()
+        return area_info
+
+    def _iter_city_entries(self, area_info: List[Dict[str, Any]]) -> List[Tuple[str, str, str, str]]:
+        entries: List[Tuple[str, str, str, str]] = []
+        for province in area_info:
+            province_name = str(province.get("AreaName", "")).strip()
+            province_code = str(province.get("AreaID", "")).strip()
+            children = province.get("children") or []
+
+            if province_name in MUNICIPALITIES:
+                for child in children:
+                    district_name = str(child.get("AreaName", "")).strip()
+                    district_code = str(child.get("AreaID", "")).strip()
+                    if not district_name or not district_code:
+                        continue
+                    entries.append((province_name, province_code, district_name, district_code))
+                continue
+
+            for child in children:
+                city_name = str(child.get("AreaName", "")).strip()
+                city_code = str(child.get("AreaID", "")).strip()
+                if not city_name or not city_code:
+                    continue
+                entries.append((province_name, province_code, city_name, city_code))
+        return entries
 
     def _parse_post_data(self, headers: Dict[str, str], post_data: str) -> Dict[str, str]:
         content_type = headers.get("content-type", "")
@@ -503,7 +664,12 @@ class NationalWaterDataAPI:
         digest = hashlib.md5(seed.encode("utf-8")).hexdigest()[:8]
         return f"NW_{digest}"
 
-    def _parse_record(self, row: List[Any]) -> Optional[WaterQualityRecord]:
+    def _make_device_id_with_city(self, section_name: str, province: str, city: str) -> str:
+        seed = f"{province}_{city}_{section_name}"
+        digest = hashlib.md5(seed.encode("utf-8")).hexdigest()[:10]
+        return f"NW_{digest}"
+
+    def _parse_record(self, row: List[Any], city: str | None = None) -> Optional[WaterQualityRecord]:
         """解析单条记录"""
         if len(row) < 5:
             return None
@@ -521,8 +687,15 @@ class NationalWaterDataAPI:
         if not timestamp:
             timestamp = dj_timezone.now()
 
-        device_id = self._make_device_id(section_name, province)
-        location = f"{province} - {river_basin}"
+        if city:
+            # 按城市抓取时，同名断面可能在不同城市/区县出现；station_id 需要包含 city 以避免落库被合并。
+            device_id = self._make_device_id_with_city(section_name, province, city)
+        else:
+            device_id = self._make_device_id(section_name, province)
+        if city:
+            location = f"{province} {city} - {river_basin}"
+        else:
+            location = f"{province} - {river_basin}"
 
         # 解析监测数据（索引从5开始）
         temperature = self._parse_float(self._clean_value(row[5] if len(row) > 5 else None))
@@ -542,6 +715,7 @@ class NationalWaterDataAPI:
             device_name=section_name,
             location=location,
             province=province,
+            city=city,
             river_basin=river_basin,
             water_quality=water_quality,
             timestamp=timestamp,
@@ -611,6 +785,82 @@ class NationalWaterDataAPI:
         logger.info(f"获取国家水质数据成功，共 {len(all_records)} 条记录")
         return all_records
 
+    def fetch_records_with_city(
+        self,
+        force_refresh: bool = False,
+        max_cities: int = 0,
+        sleep_ms: int = 0,
+        timeout_s: int = 30,
+    ) -> List[WaterQualityRecord]:
+        """按城市拉取水质数据，并在记录中补充 city 字段。
+
+        说明：
+        - 城市列表来源于 Common.js 的 `_AreaInfo`。
+        - 每个城市请求一次 `getRealDatas`，无需 Playwright。
+        """
+        if not force_refresh and self._cache_city_valid() and self._city_cache.get("records"):
+            return self._city_cache["records"]
+
+        area_info = self._load_area_info(force_refresh=force_refresh)
+        entries = self._iter_city_entries(area_info)
+        if max_cities and max_cities > 0:
+            entries = entries[:max_cities]
+
+        logger.info(
+            "国家水质按城市抓取开始: cities=%s sleep_ms=%s timeout_s=%s force_refresh=%s",
+            len(entries),
+            sleep_ms,
+            timeout_s,
+            force_refresh,
+        )
+
+        all_records: List[WaterQualityRecord] = []
+        sleep_s = max(sleep_ms, 0) / 1000.0
+
+        for idx, (_province_name, _province_code, city_name, city_code) in enumerate(entries, start=1):
+            data = self._http_post_form_json(
+                self.API_URL,
+                {
+                    "action": "getRealDatas",
+                    "AreaID": city_code,
+                    "RiverID": "",
+                    "MNName": "",
+                    "PageIndex": "1",
+                    "PageSize": "9999",
+                },
+                timeout=timeout_s,
+            )
+            tbody = data.get("tbody") or []
+            if not isinstance(tbody, list) or not tbody:
+                if idx == 1 or idx % 30 == 0 or idx == len(entries):
+                    logger.info("国家水质按城市抓取进度: %s/%s city=%s rows=0", idx, len(entries), city_name)
+                if sleep_s and idx < len(entries):
+                    time.sleep(sleep_s)
+                continue
+
+            for row in tbody:
+                record = self._parse_record(row, city=city_name)
+                if not record:
+                    continue
+                all_records.append(record)
+
+            if idx == 1 or idx % 30 == 0 or idx == len(entries):
+                logger.info(
+                    "国家水质按城市抓取进度: %s/%s city=%s rows=%s total=%s",
+                    idx,
+                    len(entries),
+                    city_name,
+                    len(tbody),
+                    len(all_records),
+                )
+            if sleep_s and idx < len(entries):
+                time.sleep(sleep_s)
+
+        self._city_cache["records"] = all_records
+        self._city_cache["fetched_at"] = dj_timezone.now()
+        logger.info(f"按城市获取国家水质数据成功，共 {len(all_records)} 条记录")
+        return all_records
+
 
 # 全局实例
 _api_instance = NationalWaterDataAPI()
@@ -667,26 +917,40 @@ class NationalWaterDataService:
         if not NationalWaterDataService.enabled():
             return {"timestamp": dj_timezone.now().isoformat(), "sensors": []}
 
+        try:
+            count = int(count)
+        except (TypeError, ValueError):
+            count = 10
+
         area_id = filters.get("area_id", "")
         river_id = filters.get("river_id", "")
         search_name = filters.get("search_name", "")
         city_name = filters.get("city_name", "")
         force_refresh = bool(filters.get("force_refresh", False))
         max_pages = int(filters.get("max_pages", 200))
+        with_city = bool(filters.get("with_city", False))
 
         # 有筛选条件时获取更多页数（由 max_pages 控制上限）
         has_filters = bool(area_id or river_id or search_name or city_name)
         if has_filters and not filters.get("max_pages"):
             max_pages = 200
 
-        records = _api_instance.fetch_records(
-            area_id=area_id,
-            river_id=river_id,
-            search_name=search_name,
-            city_name=city_name,  # 传递城市参数给 API
-            force_refresh=force_refresh,
-            max_pages=max_pages
-        )
+        if with_city and not has_filters:
+            records = _api_instance.fetch_records_with_city(
+                force_refresh=force_refresh,
+                max_cities=int(filters.get("max_cities") or 0),
+                sleep_ms=int(filters.get("sleep_ms") or getattr(settings, "NATIONAL_WATER_CITY_SLEEP_MS", 50)),
+                timeout_s=int(filters.get("timeout_s") or getattr(settings, "NATIONAL_WATER_CITY_TIMEOUT_S", 30)),
+            )
+        else:
+            records = _api_instance.fetch_records(
+                area_id=area_id,
+                river_id=river_id,
+                search_name=search_name,
+                city_name=city_name,  # 传递城市参数给 API
+                force_refresh=force_refresh,
+                max_pages=max_pages,
+            )
 
         if not records:
             return {"timestamp": dj_timezone.now().isoformat(), "sensors": []}
@@ -702,11 +966,13 @@ class NationalWaterDataService:
             latest_by_device.values(),
             key=lambda r: r.timestamp,
             reverse=True
-        )[:count]
+        )
+        if count > 0:
+            latest_records = latest_records[:count]
 
         sensors = []
         for record in latest_records:
-            city = DataTransformer.extract_city_from_name(record.device_name, record.province)
+            city = record.city or DataTransformer.extract_city_from_name(record.device_name, record.province)
             sensors.append({
                 "device_id": record.device_id,
                 "device_name": record.device_name,

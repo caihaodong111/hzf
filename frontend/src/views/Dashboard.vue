@@ -511,8 +511,13 @@ const loadDataSourceMode = async () => {
 
 const handleManualRefresh = async () => {
   if (isRefreshing.value) return
+  isRefreshing.value = true
+  if (isManualMode.value) {
+    loadRealtimeData(true)
+    return
+  }
   try {
-    await syncRealtimeData('national', 1000, false)
+    await syncRealtimeData('national', 0, false, true)
   } catch (error) {
     console.error('触发国家水质数据刷新失败:', error)
   }
