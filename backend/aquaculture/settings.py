@@ -41,7 +41,6 @@ INSTALLED_APPS = [
     'corsheaders',
     'django_filters',
     # 'drf_yasg',  # 暂时禁用以创建迁移
-    # 'django_celery_beat',
 
     # Local apps
     'apps.sensors',
@@ -170,14 +169,6 @@ CSRF_TRUSTED_ORIGINS = [
 CSRF_COOKIE_SAMESITE = 'Lax'
 
 
-# Celery Configuration
-CELERY_BROKER_URL = os.environ.get('CELERY_BROKER_URL', 'redis://127.0.0.1:6379/0')
-CELERY_RESULT_BACKEND = os.environ.get('CELERY_RESULT_BACKEND', 'redis://127.0.0.1:6379/0')
-CELERY_ACCEPT_CONTENT = ['json']
-CELERY_TASK_SERIALIZER = 'json'
-CELERY_RESULT_SERIALIZER = 'json'
-CELERY_TIMEZONE = TIME_ZONE
-
 # Logging
 LOGGING = {
     'version': 1,
@@ -207,48 +198,6 @@ LOGGING = {
 
 # Create logs directory if it doesn't exist
 (BASE_DIR / 'logs').mkdir(exist_ok=True)
-
-# Open water data source configuration
-_open_headers = {
-    "User-Agent": os.environ.get("OPEN_WATER_DATA_UA", "Mozilla/5.0"),
-}
-_open_headers_env = os.environ.get("OPEN_WATER_DATA_HEADERS", "")
-if _open_headers_env:
-    try:
-        _open_headers.update(json.loads(_open_headers_env))
-    except json.JSONDecodeError:
-        pass
-
-OPEN_WATER_DATA = {
-    "enabled": os.environ.get("OPEN_WATER_DATA_ENABLED", "false").lower() == "true",
-    "source_type": os.environ.get("OPEN_WATER_DATA_SOURCE", "csv").lower(),
-    "url": os.environ.get("OPEN_WATER_DATA_URL", ""),
-    "timeout": int(os.environ.get("OPEN_WATER_DATA_TIMEOUT", "15")),
-    "cache_minutes": int(os.environ.get("OPEN_WATER_DATA_CACHE_MINUTES", "30")),
-    "json_path": os.environ.get("OPEN_WATER_DATA_JSON_PATH", ""),
-    "time_formats": [
-        "%Y-%m-%d %H:%M:%S",
-        "%Y/%m/%d %H:%M:%S",
-        "%Y-%m-%d %H:%M",
-        "%Y/%m/%d %H:%M",
-        "%Y-%m-%d",
-        "%Y/%m/%d",
-        "%Y%m%d%H%M%S",
-    ],
-    "field_map": {
-        "device_id": os.environ.get("OPEN_WATER_DATA_FIELD_DEVICE_ID", "站点编号|断面编号|MN"),
-        "device_name": os.environ.get("OPEN_WATER_DATA_FIELD_DEVICE_NAME", "断面名称|站点名称|监测断面"),
-        "location": os.environ.get("OPEN_WATER_DATA_FIELD_LOCATION", "所在地|区域|省份|城市|河流"),
-        "timestamp": os.environ.get("OPEN_WATER_DATA_FIELD_TIMESTAMP", "监测时间|采样时间|时间"),
-        "temperature": os.environ.get("OPEN_WATER_DATA_FIELD_TEMPERATURE", "水温|温度"),
-        "ph": os.environ.get("OPEN_WATER_DATA_FIELD_PH", "pH|PH"),
-        "dissolved_oxygen": os.environ.get("OPEN_WATER_DATA_FIELD_DO", "溶解氧|DO"),
-        # 修复：电导率和盐度是不同的物理量，不能混用
-        "salinity": os.environ.get("OPEN_WATER_DATA_FIELD_SALINITY", "盐度"),
-        "conductivity": os.environ.get("OPEN_WATER_DATA_FIELD_CONDUCTIVITY", "电导率|电导"),
-    },
-    "headers": _open_headers,
-}
 
 # National water data configuration (国家水质自动综合监管平台)
 NATIONAL_WATER_DATA_ENABLED = os.environ.get("NATIONAL_WATER_DATA_ENABLED", "true").lower() == "true"

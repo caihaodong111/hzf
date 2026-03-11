@@ -13,8 +13,8 @@ from django.utils import timezone
 from datetime import timedelta
 
 from apps.sensors.models import SensorData, SensorSnapshot, Alert
-from core.open_data_provider import OpenWaterDataService
 from core.national_water_data import NationalWaterDataService
+from core.huawei_water_data import HuaweiWaterDataService
 from core.data_transformer import DataTransformer
 from core.data_source_preference import (
     get_allowed_sources,
@@ -108,11 +108,11 @@ def overview(request):
     if alert_count == 0 and not manual_mode:
         raw_alerts = []
         for preferred in get_data_source_priority():
+            if preferred == 'huawei' and HuaweiWaterDataService.enabled():
+                raw_alerts = HuaweiWaterDataService.get_alerts(count=10)
+                break
             if preferred == 'national' and NationalWaterDataService.enabled():
                 raw_alerts = NationalWaterDataService.get_alerts(count=10)
-                break
-            if preferred == 'open' and OpenWaterDataService.enabled():
-                raw_alerts = OpenWaterDataService.get_alerts(count=10)
                 break
         alert_count = len([a for a in raw_alerts if not a.get('resolved', False)])
 
@@ -122,13 +122,13 @@ def overview(request):
         alerts = list(Alert.objects.filter(data_source='manual').order_by('-created_at')[:5].values())
     else:
         for preferred in get_data_source_priority():
+            if preferred == 'huawei' and HuaweiWaterDataService.enabled():
+                raw_alerts = HuaweiWaterDataService.get_alerts(count=5)
+                alerts = [DataTransformer.transform_alert(a, 'huawei') for a in raw_alerts]
+                break
             if preferred == 'national' and NationalWaterDataService.enabled():
                 raw_alerts = NationalWaterDataService.get_alerts(count=5)
                 alerts = [DataTransformer.transform_alert(a, 'national') for a in raw_alerts]
-                break
-            if preferred == 'open' and OpenWaterDataService.enabled():
-                raw_alerts = OpenWaterDataService.get_alerts(count=5)
-                alerts = [DataTransformer.transform_alert(a, 'open') for a in raw_alerts]
                 break
         else:
             alerts = []
@@ -377,10 +377,10 @@ def data_source_settings(request):
         'message': 'success',
         'data': {
             'mode': current_mode,
-            'availability': {
-                'national_enabled': NationalWaterDataService.enabled(),
-                'open_enabled': OpenWaterDataService.enabled(),
-            }
+                'availability': {
+                    'national_enabled': NationalWaterDataService.enabled(),
+                    'huawei_enabled': HuaweiWaterDataService.enabled(),
+                }
         }
     })
 

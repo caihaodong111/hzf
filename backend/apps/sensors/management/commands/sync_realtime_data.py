@@ -4,7 +4,6 @@
 用法:
     python manage.py sync_realtime_data
     python manage.py sync_realtime_data --source national
-    python manage.py sync_realtime_data --source open --count 2000
     python manage.py sync_realtime_data --source all
 """
 from django.core.management.base import BaseCommand
@@ -21,7 +20,7 @@ class Command(BaseCommand):
             type=str,
             default='',
             dest='source',
-            help='指定数据源 national/open/all，留空按设置优先级',
+            help='指定数据源 national/huawei/all，留空按设置优先级',
         )
         parser.add_argument(
             '--count',

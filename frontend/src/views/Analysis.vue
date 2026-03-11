@@ -155,7 +155,7 @@ const trendHistory = ref([])
 const trendSearch = ref('')
 
 const dataSourceLabel = computed(() => {
-  const map = { national: '国家水质', open: '开放数据', simulator: '模拟数据', database: '数据库' }
+  const map = { national: '国家水质', huawei: '华为云', database: '数据库', manual: '手动入库', auto: '自动' }
   return map[dataSource.value] || '未知'
 })
 

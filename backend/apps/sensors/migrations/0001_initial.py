@@ -361,7 +361,7 @@ class Migration(migrations.Migration):
                     "data_source",
                     models.CharField(
                         blank=True,
-                        help_text="national/open/simulator/database",
+                        help_text="national/huawei/database",
                         max_length=50,
                         null=True,
                         verbose_name="数据来源",

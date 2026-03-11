@@ -17,7 +17,6 @@ from .serializers import (
     SensorDataSerializer, RealtimeDataSerializer,
     HistoricalDataSerializer, AlertSerializer, DashboardSummarySerializer
 )
-from core.open_data_provider import OpenWaterDataService, fetch_records
 from core.national_water_data import NationalWaterDataService
 from core.huawei_water_data import HuaweiWaterDataService
 from core.data_transformer import DataTransformer
@@ -119,31 +118,6 @@ class SensorDataViewSet(viewsets.ReadOnlyModelViewSet):
                     station_ids.update(
                         (getattr(record, "station_id", None) or getattr(record, "device_id", None))
                         for record in records
-                        if getattr(record, "station_id", None) or getattr(record, "device_id", None)
-                    )
-                except Exception:
-                    pass
-            if OpenWaterDataService.enabled():
-                source_available = True
-                try:
-                    open_records = fetch_records()
-                    filter_name = city_name or resolve_area_name(area_id)
-                    if filter_name:
-                        open_records = [
-                            record for record in open_records
-                            if matches_city(filter_name, (record.location, record.device_name))
-                        ]
-                    if search_name:
-                        search_lower = search_name.strip().lower()
-                        if search_lower:
-                            open_records = [
-                                record for record in open_records
-                                if search_lower in (record.device_name or "").lower()
-                                or search_lower in (record.location or "").lower()
-                            ]
-                    station_ids.update(
-                        (getattr(record, "station_id", None) or getattr(record, "device_id", None))
-                        for record in open_records
                         if getattr(record, "station_id", None) or getattr(record, "device_id", None)
                     )
                 except Exception:
@@ -261,7 +235,10 @@ class SensorDataViewSet(viewsets.ReadOnlyModelViewSet):
         payload = request.data or {}
         source = (payload.get('source') or '').strip().lower() or None
         count = int(payload.get('count') or 1000)
-        result = sync_realtime_data(source=source, count=count, manual=True)
+        manual = payload.get('manual', True)
+        if isinstance(manual, str):
+            manual = manual.strip().lower() in ('1', 'true', 'yes')
+        result = sync_realtime_data(source=source, count=count, manual=bool(manual))
         return Response({
             'code': 200,
             'message': 'success',
@@ -368,12 +345,6 @@ class AlertViewSet(viewsets.ModelViewSet):
                     if raw_alerts:
                         alerts = [DataTransformer.transform_alert(a, 'national') for a in raw_alerts]
                         source = 'national'
-                        break
-                if preferred == 'open' and OpenWaterDataService.enabled():
-                    raw_alerts = OpenWaterDataService.get_alerts(count=count)
-                    if raw_alerts:
-                        alerts = [DataTransformer.transform_alert(a, 'open') for a in raw_alerts]
-                        source = 'open'
                         break
 
         # 最后使用数据库数据

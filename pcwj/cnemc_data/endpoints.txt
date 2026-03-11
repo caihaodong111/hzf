@@ -1,7 +1,0 @@
-https://szzdjc.cnemc.cn:8070/GJZ/Ajax/Publish.ashx
-https://szzdjc.cnemc.cn:8070/GJZ/Business/Publish/Main.html
-https://szzdjc.cnemc.cn:8070/GJZ/Business/Publish/RealDatas.html
-https://szzdjc.cnemc.cn:8070/GJZ/Styles/Publish/Publish.css
-https://szzdjc.cnemc.cn:8070/GJZ/Styles/Publish/Publish.css?v1.1
-https://szzdjc.cnemc.cn:8070/UILib/artDialog/skins/blue.css
-https://szzdjc.cnemc.cn:8070/UILib/bootstrap/css/bootstrap.min.css

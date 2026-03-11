@@ -37,12 +37,12 @@ def set_data_source_mode(mode: str) -> DataSourcePreference:
 def get_data_source_priority() -> List[str]:
     mode = get_data_source_mode()
     if mode == DataSourcePreference.MODE_MANUAL:
-        return ['huawei', 'open']
-    return ['huawei', 'national', 'open']
+        return ['huawei']
+    return ['huawei', 'national']
 
 
 def get_allowed_sources() -> List[str]:
     mode = get_data_source_mode()
     if mode == DataSourcePreference.MODE_MANUAL:
-        return ['huawei', 'open', 'manual']
-    return ['national']
+        return ['huawei', 'manual']
+    return ['huawei', 'national']

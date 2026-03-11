@@ -30,7 +30,8 @@
       "Bash(DJANGO_SETTINGS_MODULE=aquaculture.settings python:*)",
       "Bash(pip3 list:*)",
       "Bash(conda info:*)",
-      "Bash(xargs kill:*)"
+      "Bash(xargs kill:*)",
+      "Bash(grep:*)"
     ]
   }
 }

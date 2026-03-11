@@ -75,7 +75,7 @@ class SensorData(models.Model):
     # 数据来源标识
     data_source = models.CharField(max_length=50, blank=True, null=True,
                                   verbose_name='数据来源',
-                                  help_text='national/open/database')
+                                  help_text='national/huawei/database')
 
     # 时间戳
     recorded_at = models.DateTimeField(db_index=True, verbose_name='监测时间')
@@ -157,7 +157,7 @@ class SensorSnapshot(models.Model):
 
     data_source = models.CharField(max_length=50, blank=True, null=True,
                                    verbose_name='数据来源',
-                                   help_text='national/open/manual')
+                                   help_text='national/huawei/manual')
 
     recorded_at = models.DateTimeField(db_index=True, verbose_name='监测时间')
     updated_at = models.DateTimeField(auto_now=True, verbose_name='快照更新时间')

@@ -177,7 +177,7 @@ class Migration(migrations.Migration):
                 ("total_nitrogen", models.DecimalField(blank=True, decimal_places=3, max_digits=6, null=True, verbose_name="总氮(mg/L)")),
                 ("chlorophyll_a", models.DecimalField(blank=True, decimal_places=3, max_digits=6, null=True, verbose_name="叶绿素a(mg/L)")),
                 ("algae_density", models.DecimalField(blank=True, decimal_places=2, max_digits=12, null=True, verbose_name="藻密度(cells/L)")),
-                ("data_source", models.CharField(blank=True, help_text="national/open/manual", max_length=50, null=True, verbose_name="数据来源")),
+                ("data_source", models.CharField(blank=True, help_text="national/huawei/manual", max_length=50, null=True, verbose_name="数据来源")),
                 ("recorded_at", models.DateTimeField(db_index=True, verbose_name="监测时间")),
                 ("updated_at", models.DateTimeField(auto_now=True, verbose_name="快照更新时间")),
             ],

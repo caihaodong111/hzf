@@ -47,10 +47,6 @@
         <div class="data-panel glass">
           <div class="panel-header">
             <h3>实时数据列表</h3>
-            <div class="status-sync">
-              <div class="sync-dot" :class="{ active: autoRefresh }"></div>
-              <span>{{ autoRefresh ? '自动同步中' : '同步已暂停' }}</span>
-            </div>
           </div>
 
         <div class="panel-filters">
@@ -95,11 +91,11 @@
                 type="text"
                 placeholder="断面名称搜索..."
                 v-model="filters.search"
-                @keyup.enter="loadRealtimeData(false, true)"
+                @keyup.enter="loadRealtimeData(true)"
               />
             </div>
 
-            <button class="search-btn" type="button" @click="loadRealtimeData(false, true)">
+            <button class="search-btn" type="button" @click="loadRealtimeData(true)">
               <el-icon class="search-icon"><Search /></el-icon>
               搜索
             </button>
@@ -184,15 +180,8 @@ const sensors = ref([])
 const total = ref(0)
 const dataSourceMode = ref('auto')
 const isManualFetching = ref(false)
-const autoRefresh = ref(true)
-const refreshInterval = ref(30)
-const progressPercent = ref(0)
-const isManualRefresh = ref(false)
 const isRefreshing = ref(false)
 const updateLog = ref([])
-let refreshTimer = null
-let progressTimer = null
-let elapsedSinceRefresh = 0
 
 const filters = ref({
   province: '',
@@ -286,11 +275,11 @@ const selectProvince = (item, index = 0) => {
   filters.value.province = item.code
   if (item.children && item.children.length) {
     activeProvinceIndex.value = index
-    loadRealtimeData(false, true) // 省级筛选
+    loadRealtimeData(true) // 省级筛选
     return
   }
   provinceDropdownOpen.value = false
-  loadRealtimeData(false, true) // 强制刷新
+  loadRealtimeData(true) // 强制刷新
 }
 
 const selectProvinceChild = (child) => {
@@ -301,7 +290,7 @@ const selectProvinceChild = (child) => {
   }
   selectedProvinceChild.value = child
   provinceDropdownOpen.value = false
-  loadRealtimeData(false, true) // 强制刷新
+  loadRealtimeData(true) // 强制刷新
 }
 
 // 点击外部关闭下拉
@@ -407,17 +396,14 @@ const stats = computed(() => [
   }
 ])
 
-const loadRealtimeData = async (isAuto = false, forceRefresh = false) => {
+const loadRealtimeData = async (forceRefresh = false) => {
   // 只有在不强制刷新且没有筛选条件时才使用缓存
   if (!forceRefresh && sensorStore.isCacheValid() && sensorStore.cache.sensors.value.length > 0) {
     sensors.value = sensorStore.cache.sensors.value
     total.value = sensorStore.cache.total.value
   }
 
-  if (!isAuto) {
-    loading.value = true
-    isManualRefresh.value = true
-  }
+  loading.value = true
   isRefreshing.value = true
 
   try {
@@ -505,14 +491,11 @@ const loadRealtimeData = async (isAuto = false, forceRefresh = false) => {
       pushHistory('warningCount', warningCount.value)
       pushHistory('onlineCount', onlineCount.value)
 
-      elapsedSinceRefresh = 0
-      progressPercent.value = 0
     }
   } catch (error) {
     console.error('加载实时数据失败:', error)
   } finally {
     loading.value = false
-    isManualRefresh.value = false
     isRefreshing.value = false
   }
 }
@@ -526,8 +509,14 @@ const loadDataSourceMode = async () => {
   }
 }
 
-const handleManualRefresh = () => {
-  loadRealtimeData(false)
+const handleManualRefresh = async () => {
+  if (isRefreshing.value) return
+  try {
+    await syncRealtimeData('national', 1000, false)
+  } catch (error) {
+    console.error('触发国家水质数据刷新失败:', error)
+  }
+  loadRealtimeData(true)
 }
 
 const handleManualFetch = async () => {
@@ -535,62 +524,11 @@ const handleManualFetch = async () => {
   isManualFetching.value = true
   try {
     await syncRealtimeData()
-    await loadRealtimeData(false, true)
+    await loadRealtimeData(true)
   } catch (error) {
     console.error('手动获取数据失败:', error)
   } finally {
     isManualFetching.value = false
-  }
-}
-
-const toggleAutoRefresh = (enabled) => {
-  if (enabled) {
-    startProgressTimer()
-    startRefreshTimer()
-  } else {
-    stopRefreshTimer()
-    stopProgressTimer()
-    progressPercent.value = 0
-  }
-}
-
-const onIntervalChange = () => {
-  if (autoRefresh.value) {
-    stopRefreshTimer()
-    stopProgressTimer()
-    elapsedSinceRefresh = 0
-    startProgressTimer()
-    startRefreshTimer()
-  }
-}
-
-const startRefreshTimer = () => {
-  stopRefreshTimer()
-  refreshTimer = setInterval(() => {
-    loadRealtimeData(true)
-  }, refreshInterval.value * 1000)
-}
-
-const stopRefreshTimer = () => {
-  if (refreshTimer) {
-    clearInterval(refreshTimer)
-    refreshTimer = null
-  }
-}
-
-const startProgressTimer = () => {
-  stopProgressTimer()
-  const interval = 100
-  progressTimer = setInterval(() => {
-    elapsedSinceRefresh += interval
-    progressPercent.value = (elapsedSinceRefresh / (refreshInterval.value * 1000)) * 100
-  }, interval)
-}
-
-const stopProgressTimer = () => {
-  if (progressTimer) {
-    clearInterval(progressTimer)
-    progressTimer = null
   }
 }
 
@@ -662,18 +600,11 @@ onMounted(async () => {
   }
   loadRealtimeData()
 
-  if (autoRefresh.value) {
-    startProgressTimer()
-    startRefreshTimer()
-  }
-
   // 添加点击外部关闭下拉的事件监听
   document.addEventListener('click', handleClickOutside)
 })
 
 onUnmounted(() => {
-  stopRefreshTimer()
-  stopProgressTimer()
   document.removeEventListener('click', handleClickOutside)
 })
 </script>
@@ -860,25 +791,6 @@ $text-sub: #64748b;
       font-size: 18px;
     }
 
-    .status-sync {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      font-size: 12px;
-      color: $text-sub;
-
-      .sync-dot {
-        width: 8px;
-        height: 8px;
-        border-radius: 50%;
-        background: #cbd5f5;
-
-        &.active {
-          background: #22c55e;
-          box-shadow: 0 0 8px rgba(34, 197, 94, 0.6);
-        }
-      }
-    }
   }
 }
 

@@ -5,14 +5,14 @@
     <header class="settings-header">
       <div>
         <h1>数据源设置</h1>
-        <p>在自动国家平台与手动API之间切换</p>
+        <p>在国家水质平台与华为云之间切换</p>
       </div>
       <div class="status-pills">
         <span class="pill" :class="availability.national_enabled ? 'ok' : 'off'">
           国家平台 {{ availability.national_enabled ? '可用' : '未启用' }}
         </span>
-        <span class="pill" :class="availability.open_enabled ? 'ok' : 'off'">
-          手动API {{ availability.open_enabled ? '可用' : '未启用' }}
+        <span class="pill" :class="availability.huawei_enabled ? 'ok' : 'off'">
+          华为云 {{ availability.huawei_enabled ? '可用' : '未启用' }}
         </span>
       </div>
     </header>
@@ -25,7 +25,7 @@
             <input type="radio" value="auto" v-model="mode" />
             <div class="option-content">
               <div class="option-title">自动</div>
-              <div class="option-subtitle">优先国家水质平台，必要时回退</div>
+              <div class="option-subtitle">优先国家水质平台，必要时回退至华为云</div>
               <div class="option-detail">适合日常监测与全域覆盖</div>
             </div>
           </label>
@@ -33,8 +33,8 @@
             <input type="radio" value="manual" v-model="mode" />
             <div class="option-content">
               <div class="option-title">手动</div>
-              <div class="option-subtitle">优先自定义API接口</div>
-              <div class="option-detail">适合接入第三方或临时数据源</div>
+              <div class="option-subtitle">优先华为云数据源</div>
+              <div class="option-detail">适合使用华为云稳定接入</div>
             </div>
           </label>
         </div>
@@ -50,8 +50,8 @@
         <div class="card-title">提示</div>
         <ul>
           <li>自动模式适合国家水质平台稳定接入场景。</li>
-          <li>手动模式会优先调用配置的API数据源。</li>
-          <li>如果手动API未启用，请先在后端配置相关参数。</li>
+          <li>手动模式会优先调用华为云数据源。</li>
+          <li>如果华为云未启用，请先在后端配置相关参数。</li>
         </ul>
       </div>
     </section>
@@ -68,7 +68,7 @@ const loading = ref(false)
 const saving = ref(false)
 const availability = ref({
   national_enabled: false,
-  open_enabled: false
+  huawei_enabled: false
 })
 
 const loadSettings = async () => {

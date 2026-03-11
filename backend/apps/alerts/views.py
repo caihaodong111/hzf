@@ -7,7 +7,6 @@ from rest_framework.response import Response
 
 from apps.sensors.models import Alert as AlertModel
 from apps.sensors.serializers import AlertSerializer
-from core.open_data_provider import OpenWaterDataService
 from core.national_water_data import NationalWaterDataService
 from core.data_transformer import DataTransformer
 
@@ -26,12 +25,6 @@ class AlertViewSet:
             raw_alerts = NationalWaterDataService.get_alerts(count=count)
             if raw_alerts:
                 alerts = [DataTransformer.transform_alert(a, 'national') for a in raw_alerts]
-
-        # 其次使用外部数据源
-        if not alerts and OpenWaterDataService.enabled():
-            raw_alerts = OpenWaterDataService.get_alerts(count=count)
-            if raw_alerts:
-                alerts = [DataTransformer.transform_alert(a, 'open') for a in raw_alerts]
 
         # 无可用数据源时返回空列表
 

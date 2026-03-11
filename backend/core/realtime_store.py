@@ -17,7 +17,6 @@ from apps.sensors.models import SensorData, SensorSnapshot
 from core.data_source_preference import get_data_source_priority
 from core.data_transformer import DataTransformer
 from core.national_water_data import NationalWaterDataService
-from core.open_data_provider import OpenWaterDataService
 from core.huawei_water_data import HuaweiWaterDataService
 from core.city_resolver import infer_city_name, infer_province_name
 from core.amap_geocoding import get_amap_service
@@ -57,9 +56,6 @@ def _fetch_realtime(source: str, count: int) -> List[Dict[str, Any]]:
     if source == "national":
         result = NationalWaterDataService.get_realtime(count=count, force_refresh=True)
         return result.get("sensors", [])
-    if source == "open":
-        result = OpenWaterDataService.get_realtime(count=count)
-        return result.get("sensors", [])
     if source == "huawei":
         # 华为数据源强制刷新缓存，确保获取最新数据
         result = HuaweiWaterDataService.get_realtime(count=count, force_refresh=True)
@@ -89,7 +85,7 @@ def sync_realtime_data(
         results: List[Dict[str, Any]] = []
         total_created = 0
         total_updated = 0
-        for item in ("national", "open", "huawei"):
+        for item in ("national", "huawei"):
             created = 0
             updated = 0
             result = sync_realtime_data(source=item, count=count)

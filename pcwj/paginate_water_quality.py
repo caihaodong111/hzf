@@ -4,12 +4,15 @@ import html
 import json
 import math
 import re
+import subprocess
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 from urllib.parse import parse_qs, urlencode
 
-from playwright.sync_api import sync_playwright
-
+PUBLISH_ENDPOINT = "https://szzdjc.cnemc.cn:8070/GJZ/Ajax/Publish.ashx"
+COMMON_JS_URL = "https://szzdjc.cnemc.cn:8070/GJZ/Scripts/Publish/Common.js?v2.1"
+MUNICIPALITIES = {"北京市", "天津市", "上海市", "重庆市"}
 
 PAGE_KEYS = [
     "page",
@@ -104,6 +107,145 @@ def build_post_body(fields: Dict[str, str], content_type: str) -> str:
     return urlencode(fields)
 
 
+def curl_bytes(url: str) -> bytes:
+    proc = subprocess.run(
+        ["curl", "-sS", "-L", url],
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    return proc.stdout
+
+
+def curl_post_json(url: str, form: Dict[str, str]) -> Dict[str, Any]:
+    body = urlencode(form)
+    proc = subprocess.run(
+        [
+            "curl",
+            "-sS",
+            "-X",
+            "POST",
+            url,
+            "-H",
+            "Content-Type: application/x-www-form-urlencoded; charset=UTF-8",
+            "--data",
+            body,
+        ],
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    data, err = load_json_response(proc.stdout.decode("utf-8", errors="replace"))
+    if not isinstance(data, dict):
+        raise RuntimeError(f"Failed to parse API JSON. {err or ''}".strip())
+    return data
+
+
+def extract_area_info(common_js_text: str) -> List[Dict[str, Any]]:
+    marker = "var _AreaInfo"
+    start = common_js_text.find(marker)
+    if start < 0:
+        raise RuntimeError("Failed to locate `_AreaInfo` in Common.js.")
+
+    bracket_start = common_js_text.find("[", start)
+    if bracket_start < 0:
+        raise RuntimeError("Failed to locate `_AreaInfo` array start in Common.js.")
+
+    depth = 0
+    in_string = False
+    escape = False
+    end = -1
+    for i in range(bracket_start, len(common_js_text)):
+        ch = common_js_text[i]
+        if in_string:
+            if escape:
+                escape = False
+                continue
+            if ch == "\\":
+                escape = True
+                continue
+            if ch == '"':
+                in_string = False
+            continue
+
+        if ch == '"':
+            in_string = True
+            continue
+        if ch == "[":
+            depth += 1
+            continue
+        if ch == "]":
+            depth -= 1
+            if depth == 0:
+                end = i + 1
+                break
+
+    if end < 0:
+        raise RuntimeError("Failed to find end of `_AreaInfo` array in Common.js.")
+
+    payload = common_js_text[bracket_start:end]
+    try:
+        parsed = json.loads(payload)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"Failed to parse `_AreaInfo` JSON: {exc}") from exc
+    if not isinstance(parsed, list):
+        raise RuntimeError("Unexpected `_AreaInfo` format; expected list.")
+    return parsed
+
+
+def iter_city_entries(area_info: List[Dict[str, Any]]) -> List[Tuple[str, str, str, str]]:
+    entries: List[Tuple[str, str, str, str]] = []
+    for province in area_info:
+        province_name = str(province.get("AreaName", "")).strip()
+        province_code = str(province.get("AreaID", "")).strip()
+        children = province.get("children") or []
+
+        if province_name in MUNICIPALITIES:
+            for child in children:
+                district_name = str(child.get("AreaName", "")).strip()
+                district_code = str(child.get("AreaID", "")).strip()
+                if not district_name or not district_code:
+                    continue
+                entries.append((province_name, province_code, district_name, district_code))
+            continue
+
+        for child in children:
+            city_name = str(child.get("AreaName", "")).strip()
+            city_code = str(child.get("AreaID", "")).strip()
+            if not city_name or not city_code:
+                continue
+            entries.append((province_name, province_code, city_name, city_code))
+    return entries
+
+
+def enrich_headers_with_city(headers: List[str]) -> List[str]:
+    if headers and headers[0] == "省份":
+        return [headers[0], "城市", *headers[1:]]
+    return ["城市", *headers]
+
+
+def enrich_row_with_city(row: List[str], city_name: str) -> List[str]:
+    if row and row[0] and len(row) >= 1:
+        return [row[0], city_name, *row[1:]]
+    return [city_name, *row]
+
+
+def export_csv_from_response_text(response_text: str, out_path: Path) -> None:
+    data, err = load_json_response(response_text)
+    if not isinstance(data, dict):
+        raise RuntimeError(f"Failed to parse response JSON. {err or ''}".strip())
+
+    headers = clean_headers(data.get("thead", []))
+    rows = [clean_row(r) for r in data.get("tbody", [])]
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with out_path.open("w", encoding="utf-8-sig", newline="") as f:
+        writer = csv.writer(f)
+        if headers:
+            writer.writerow(headers)
+        writer.writerows(rows)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Paginate water quality data and export CSV.")
     parser.add_argument(
@@ -111,15 +253,99 @@ def main() -> None:
         default="https://szzdjc.cnemc.cn:8070/GJZ/Business/Publish/Main.html",
     )
     parser.add_argument("--out", default="cnemc_data/water_quality.csv")
+    parser.add_argument(
+        "--from-file",
+        default="",
+        help="Export CSV from a saved Publish.ashx response file (offline mode).",
+    )
+    parser.add_argument(
+        "--with-city",
+        action="store_true",
+        help="Fetch per-city data and add a 城市 column (uses curl; slower but adds city).",
+    )
+    parser.add_argument(
+        "--common-js",
+        default="cnemc_data/Common.js",
+        help="Cached Common.js path for city list (downloaded if missing).",
+    )
+    parser.add_argument("--refresh-common-js", action="store_true", help="Re-download Common.js")
+    parser.add_argument("--sleep-ms", type=int, default=50, help="Sleep between city requests")
+    parser.add_argument("--max-cities", type=int, default=0, help="0 means no limit")
     parser.add_argument("--wait-ms", type=int, default=8000)
     parser.add_argument("--headed", action="store_true", help="Run with browser UI")
     parser.add_argument("--max-pages", type=int, default=0, help="0 means no limit")
     args = parser.parse_args()
 
+    out_path = Path(args.out)
+    if args.with_city and args.from_file:
+        raise SystemExit("--with-city cannot be used together with --from-file.")
+
+    if args.with_city:
+        common_js_path = Path(args.common_js)
+        if args.refresh_common_js or not common_js_path.exists():
+            common_js_path.parent.mkdir(parents=True, exist_ok=True)
+            common_js_path.write_bytes(curl_bytes(COMMON_JS_URL))
+        common_js_text = common_js_path.read_text(encoding="utf-8-sig", errors="replace")
+        area_info = extract_area_info(common_js_text)
+        cities = iter_city_entries(area_info)
+        if args.max_cities > 0:
+            cities = cities[: args.max_cities]
+
+        headers: List[str] = []
+        all_rows: List[List[str]] = []
+        for idx, (province_name, _province_code, city_name, city_code) in enumerate(cities, start=1):
+            data = curl_post_json(
+                PUBLISH_ENDPOINT,
+                {
+                    "action": "getRealDatas",
+                    "AreaID": city_code,
+                    "RiverID": "",
+                    "MNName": "",
+                    "PageIndex": "1",
+                    "PageSize": "9999",
+                },
+            )
+            if not headers:
+                base_headers = clean_headers(data.get("thead", []))
+                headers = enrich_headers_with_city(base_headers)
+            tbody = data.get("tbody", [])
+            if isinstance(tbody, list) and tbody:
+                for r in tbody:
+                    all_rows.append(enrich_row_with_city(clean_row(r), city_name))
+            if args.sleep_ms > 0 and idx < len(cities):
+                time.sleep(args.sleep_ms / 1000.0)
+
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        with out_path.open("w", encoding="utf-8-sig", newline="") as f:
+            writer = csv.writer(f)
+            if headers:
+                writer.writerow(headers)
+            writer.writerows(all_rows)
+        return
+
+    if args.from_file:
+        response_path = Path(args.from_file)
+        export_csv_from_response_text(response_path.read_text(encoding="utf-8"), out_path)
+        return
+
+    from playwright.sync_api import sync_playwright
+
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=not args.headed)
-        context = browser.new_context(ignore_https_errors=True)
+        browser = p.chromium.launch(
+            headless=not args.headed,
+            args=["--disable-http2"],
+        )
+        context = browser.new_context(
+            ignore_https_errors=True,
+            user_agent=(
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/121.0.0.0 Safari/537.36"
+            ),
+        )
         page = context.new_page()
+        page.set_default_navigation_timeout(60000)
+        page.set_default_timeout(60000)
 
         found = {
             "data": None,
@@ -149,8 +375,17 @@ def main() -> None:
                 found["raw_text"] = text
 
         page.on("response", handle_response)
-        page.goto(args.url, wait_until="networkidle")
-        page.wait_for_timeout(args.wait_ms)
+        last_error = None
+        for wait_until in ("domcontentloaded", "load"):
+            try:
+                page.goto(args.url, wait_until=wait_until)
+                page.wait_for_timeout(args.wait_ms)
+                last_error = None
+                break
+            except Exception as exc:
+                last_error = exc
+        if last_error:
+            raise last_error
 
         if not isinstance(found["data"], dict) or "tbody" not in found["data"]:
             debug_path = Path("cnemc_data/first_response.txt")
@@ -188,7 +423,6 @@ def main() -> None:
         start_page = int(float(post_fields.get(page_key, 1)))
         total_pages = math.ceil(total_records / rows_per_page) if rows_per_page else 0
 
-        out_path = Path(args.out)
         out_path.parent.mkdir(parents=True, exist_ok=True)
 
         headers = clean_headers(first_data.get("thead", []))

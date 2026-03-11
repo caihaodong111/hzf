@@ -13,7 +13,13 @@ def _safe_filename(url: str, content_type: str) -> str:
     if parsed.query:
         q_hash = hashlib.sha1(parsed.query.encode("utf-8")).hexdigest()[:10]
         base = f"{base}_{q_hash}"
-    ext = ".json" if "json" in content_type.lower() else ".txt"
+    lowered = content_type.lower()
+    if "json" in lowered:
+        ext = ".json"
+    elif "javascript" in lowered or "ecmascript" in lowered:
+        ext = ".js"
+    else:
+        ext = ".txt"
     return f"{base}{ext}"
 
 
@@ -62,7 +68,13 @@ def capture_site_data(
             if response.status != 200:
                 return
             content_type = response.headers.get("content-type", "")
-            if "json" not in content_type.lower() and "text" not in content_type.lower():
+            lowered = content_type.lower()
+            if (
+                "json" not in lowered
+                and "text" not in lowered
+                and "javascript" not in lowered
+                and "ecmascript" not in lowered
+            ):
                 return
 
             try:
