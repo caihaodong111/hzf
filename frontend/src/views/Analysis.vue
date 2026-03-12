@@ -31,38 +31,18 @@
           </div>
           <div class="kpi-mini-grid">
             <div class="mini-card glass-card">
-              <span class="label">在线站点</span>
-              <span class="value">{{ overview.online_devices || onlineCount }}</span>
-              <span class="sub">总数 {{ sensors.length }}</span>
-            </div>
-            <div class="mini-card glass-card">
               <span class="label">告警数量</span>
               <span class="value danger">{{ overview.alert_count || 0 }}</span>
-              <span class="sub">近 {{ timeRange }}h</span>
+              <span class="sub">最新快照</span>
             </div>
           </div>
           <div class="metrics-card glass-card">
             <div class="card-header">核心指标均值</div>
-            <div class="metric-item">
-              <span>水温</span>
-              <div class="bar-bg">
-                <div class="bar-fill" :style="{ width: (avgMetrics.temperature / 40) * 100 + '%' }"></div>
+            <div class="metric-grid">
+              <div v-for="metric in avgMetricCards" :key="metric.key" class="metric-cell">
+                <span class="metric-name">{{ metric.label }}</span>
+                <span class="metric-value">{{ metric.value }}</span>
               </div>
-              <span class="num">{{ avgMetrics.temperature }}°C</span>
-            </div>
-            <div class="metric-item">
-              <span>溶解氧</span>
-              <div class="bar-bg">
-                <div class="bar-fill oxygen" :style="{ width: (avgMetrics.dissolved_oxygen / 15) * 100 + '%' }"></div>
-              </div>
-              <span class="num">{{ avgMetrics.dissolved_oxygen }}</span>
-            </div>
-            <div class="metric-item">
-              <span>pH值</span>
-              <div class="bar-bg">
-                <div class="bar-fill ph" :style="{ width: (avgMetrics.ph / 14) * 100 + '%' }"></div>
-              </div>
-              <span class="num">{{ avgMetrics.ph }}</span>
             </div>
           </div>
         </div>
@@ -75,7 +55,7 @@
             </div>
             <el-tag type="danger" effect="dark" round>高风险优先</el-tag>
           </div>
-          <el-table :data="riskTable" style="width: 100%" height="320" class="custom-table compact">
+          <el-table :data="riskTable" style="width: 100%" height="320" class="custom-table compact risk-table">
             <el-table-column prop="station_name" label="站点" min-width="140" show-overflow-tooltip>
               <template #default="{ row }">
                 <div class="risk-name">{{ row.station_name || '-' }}</div>
@@ -90,7 +70,7 @@
                 {{ row.water_quality || '未知' }}
               </template>
             </el-table-column>
-            <el-table-column prop="risk_score" label="风险" width="68" align="center" sortable>
+            <el-table-column prop="risk_score" label="风险" width="80" align="center" sortable>
               <template #default="{ row }">
                 <span :class="['score-tag', row.risk_tag]">{{ row.risk_score }}</span>
               </template>
@@ -173,15 +153,26 @@ const trendDeviceName = computed(() => {
   return target?.station_name || target?.station_id || '未选择'
 })
 
-const onlineCount = computed(() => sensors.value.filter(s => s.status === 'online').length)
+const formatAvg = (value, digits = 2, unit = '') => {
+  const num = typeof value === 'string' ? Number(value) : Number(value)
+  if (!Number.isFinite(num)) return '-'
+  return `${num.toFixed(digits)}${unit}`
+}
 
-const avgMetrics = computed(() => {
-  const averages = { temperature: 0, ph: 0, dissolved_oxygen: 0 }
-  Object.keys(averages).forEach(key => {
-    const values = sensors.value.map(s => s[key]).filter(v => v !== null && v !== undefined)
-    averages[key] = values.length ? (values.reduce((a, b) => a + b, 0) / values.length).toFixed(1) : 0
-  })
-  return averages
+const avgMetricCards = computed(() => {
+  const data = overview.value || {}
+  return [
+    { key: 'ph', label: 'pH(无量纲)', value: formatAvg(data.avg_ph, 2) },
+    { key: 'dissolved_oxygen', label: '溶解氧(mg/L)', value: formatAvg(data.avg_dissolved_oxygen, 2) },
+    { key: 'conductivity', label: '电导率(μS/cm)', value: formatAvg(data.avg_conductivity, 2) },
+    { key: 'turbidity', label: '浊度(NTU)', value: formatAvg(data.avg_turbidity, 2) },
+    { key: 'permanganate_index', label: '高锰酸盐指数(mg/L)', value: formatAvg(data.avg_permanganate_index, 2) },
+    { key: 'ammonia_nitrogen', label: '氨氮(mg/L)', value: formatAvg(data.avg_ammonia_nitrogen, 2) },
+    { key: 'total_phosphorus', label: '总磷(mg/L)', value: formatAvg(data.avg_total_phosphorus, 2) },
+    { key: 'total_nitrogen', label: '总氮(mg/L)', value: formatAvg(data.avg_total_nitrogen, 2) },
+    { key: 'chlorophyll_a', label: '叶绿素a(mg/L)', value: formatAvg(data.avg_chlorophyll_a, 2) },
+    { key: 'algae_density', label: '藻密度(cells/L)', value: formatAvg(data.avg_algae_density, 2) }
+  ]
 })
 
 const qualityIndex = computed(() => {
@@ -269,8 +260,8 @@ const updateCharts = () => {
 
   charts[3]?.setOption({
     tooltip: { trigger: 'axis', backgroundColor: 'rgba(255,255,255,0.9)', borderRadius: 12 },
-    legend: { icon: 'circle', right: 20 },
-    grid: { left: 40, right: 20, top: 40, bottom: 40 },
+    legend: { type: 'scroll', icon: 'circle', top: 8, left: 20, right: 20 },
+    grid: { left: 44, right: 24, top: 56, bottom: 40 },
     xAxis: { type: 'category', data: times, axisLine: { show: false } },
     yAxis: { type: 'value', splitLine: { lineStyle: { type: 'dashed' } } },
     series: [
@@ -297,6 +288,78 @@ const updateCharts = () => {
         symbolSize: showTrendPoints ? 6 : 4,
         data: trendHistory.value.map(item => item.ph),
         lineStyle: { width: showTrendPoints ? 0 : 3, color: '#14b8a6' }
+      },
+      {
+        name: '电导率',
+        type: 'line',
+        smooth: true,
+        showSymbol: showTrendPoints,
+        symbolSize: showTrendPoints ? 6 : 4,
+        data: trendHistory.value.map(item => item.conductivity),
+        lineStyle: { width: showTrendPoints ? 0 : 3, color: '#6366f1' }
+      },
+      {
+        name: '浊度',
+        type: 'line',
+        smooth: true,
+        showSymbol: showTrendPoints,
+        symbolSize: showTrendPoints ? 6 : 4,
+        data: trendHistory.value.map(item => item.turbidity),
+        lineStyle: { width: showTrendPoints ? 0 : 3, color: '#f97316' }
+      },
+      {
+        name: '高锰酸盐指数',
+        type: 'line',
+        smooth: true,
+        showSymbol: showTrendPoints,
+        symbolSize: showTrendPoints ? 6 : 4,
+        data: trendHistory.value.map(item => item.permanganate_index ?? item.permanganate),
+        lineStyle: { width: showTrendPoints ? 0 : 3, color: '#f59e0b' }
+      },
+      {
+        name: '氨氮',
+        type: 'line',
+        smooth: true,
+        showSymbol: showTrendPoints,
+        symbolSize: showTrendPoints ? 6 : 4,
+        data: trendHistory.value.map(item => item.ammonia_nitrogen),
+        lineStyle: { width: showTrendPoints ? 0 : 3, color: '#ef4444' }
+      },
+      {
+        name: '总磷',
+        type: 'line',
+        smooth: true,
+        showSymbol: showTrendPoints,
+        symbolSize: showTrendPoints ? 6 : 4,
+        data: trendHistory.value.map(item => item.total_phosphorus),
+        lineStyle: { width: showTrendPoints ? 0 : 3, color: '#22c55e' }
+      },
+      {
+        name: '总氮',
+        type: 'line',
+        smooth: true,
+        showSymbol: showTrendPoints,
+        symbolSize: showTrendPoints ? 6 : 4,
+        data: trendHistory.value.map(item => item.total_nitrogen),
+        lineStyle: { width: showTrendPoints ? 0 : 3, color: '#0f766e' }
+      },
+      {
+        name: '叶绿素a',
+        type: 'line',
+        smooth: true,
+        showSymbol: showTrendPoints,
+        symbolSize: showTrendPoints ? 6 : 4,
+        data: trendHistory.value.map(item => item.chlorophyll_a),
+        lineStyle: { width: showTrendPoints ? 0 : 3, color: '#a855f7' }
+      },
+      {
+        name: '藻密度',
+        type: 'line',
+        smooth: true,
+        showSymbol: showTrendPoints,
+        symbolSize: showTrendPoints ? 6 : 4,
+        data: trendHistory.value.map(item => item.algae_density),
+        lineStyle: { width: showTrendPoints ? 0 : 3, color: '#64748b' }
       }
     ]
   })
@@ -699,7 +762,7 @@ onUnmounted(() => {
 
 .kpi-mini-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr;
   gap: 15px;
 
   .mini-card {
@@ -730,47 +793,49 @@ onUnmounted(() => {
 }
 
 .metrics-card {
+  overflow: hidden;
+
   .card-header {
     font-size: 14px;
     font-weight: 600;
   }
 }
 
-.metric-item {
-  margin-top: 15px;
+.metric-grid {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px 12px;
+  width: 100%;
+}
 
-  span {
-    font-size: 12px;
-    color: #475569;
-  }
+.metric-cell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.6);
+  border: 1px solid rgba(15, 23, 42, 0.06);
+  min-width: 0;
+}
 
-  .bar-bg {
-    height: 6px;
-    background: #e2e8f0;
-    border-radius: 3px;
-    margin: 4px 0;
-    overflow: hidden;
-  }
+.metric-name {
+  font-size: 12px;
+  color: #475569;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
 
-  .bar-fill {
-    height: 100%;
-    background: #f59e0b;
-    width: 0;
-    transition: width 1s;
-  }
-
-  .bar-fill.oxygen {
-    background: #0ea5e9;
-  }
-
-  .bar-fill.ph {
-    background: #14b8a6;
-  }
-
-  .num {
-    font-weight: 600;
-    color: #1e293b;
-  }
+.metric-value {
+  font-size: 13px;
+  font-weight: 700;
+  color: #0f172a;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .card-header-flex {
@@ -869,6 +934,20 @@ onUnmounted(() => {
   }
 }
 
+.risk-table {
+  :deep(.el-table__header-wrapper th.is-sortable .cell) {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    white-space: nowrap;
+  }
+
+  :deep(.el-table__header-wrapper th.is-sortable .caret-wrapper) {
+    flex: 0 0 auto;
+  }
+}
+
 @keyframes spin {
   from {
     transform: rotate(0deg);
@@ -900,6 +979,10 @@ onUnmounted(() => {
   .quality-chart,
   .province-chart {
     min-height: 240px;
+  }
+
+  .metric-grid {
+    grid-template-columns: 1fr;
   }
 }
 </style>

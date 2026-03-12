@@ -77,14 +77,31 @@ def overview(request):
         realtime_data = {'sensors': [], 'timestamp': timezone.now().isoformat()}
         source = 'none'
 
+    def _round_agg(value, digits=2):
+        if value is None:
+            return 0
+        try:
+            return round(float(value), digits)
+        except (TypeError, ValueError):
+            return 0
+
     # 计算统计数据 - 使用真实数据
     sensors = realtime_data.get('sensors', [])
 
-    # 计算平均值
-    temp_values = [s.get('temperature') for s in sensors if s.get('temperature') is not None]
-    do_values = [s.get('dissolved_oxygen') for s in sensors if s.get('dissolved_oxygen') is not None]
-    avg_temp = sum(temp_values) / len(temp_values) if temp_values else 0
-    avg_do = sum(do_values) / len(do_values) if do_values else 0
+    # 核心指标均值：来自 sensor_data_latest（SensorSnapshot），不依赖 count / hours
+    avg_agg = snapshot_qs.aggregate(
+        avg_temperature=Avg('temperature'),
+        avg_ph=Avg('ph'),
+        avg_dissolved_oxygen=Avg('dissolved_oxygen'),
+        avg_conductivity=Avg('conductivity'),
+        avg_turbidity=Avg('turbidity'),
+        avg_permanganate=Avg('permanganate'),
+        avg_ammonia_nitrogen=Avg('ammonia_nitrogen'),
+        avg_total_phosphorus=Avg('total_phosphorus'),
+        avg_total_nitrogen=Avg('total_nitrogen'),
+        avg_chlorophyll_a=Avg('chlorophyll_a'),
+        avg_algae_density=Avg('algae_density'),
+    )
 
     # 设备统计 - 优先使用实时数据
     total_devices = len(sensors)
@@ -97,24 +114,10 @@ def overview(request):
             manual_mode=manual_mode
         )
 
-    # 获取告警统计
-    time_threshold = timezone.now() - timedelta(hours=hours)
-    alert_qs = Alert.objects.filter(created_at__gte=time_threshold, resolved=False)
-    if manual_mode:
-        alert_qs = alert_qs.filter(data_source='manual')
-    alert_count = alert_qs.count()
-
-    # 如果数据库没有告警，从数据源获取
-    if alert_count == 0 and not manual_mode:
-        raw_alerts = []
-        for preferred in get_data_source_priority():
-            if preferred == 'huawei' and HuaweiWaterDataService.enabled():
-                raw_alerts = HuaweiWaterDataService.get_alerts(count=10)
-                break
-            if preferred == 'national' and NationalWaterDataService.enabled():
-                raw_alerts = NationalWaterDataService.get_alerts(count=10)
-                break
-        alert_count = len([a for a in raw_alerts if not a.get('resolved', False)])
+    # 告警数量（用于“水质综合分析”）：来自 sensor_data_latest 中 water_quality >= Ⅲ 的数量
+    # 说明：这里按最新快照统计，不受 hours 参数影响
+    poor_qualities = ['Ⅲ', 'Ⅳ', 'Ⅴ', '劣Ⅴ', 'Ⅲ类', 'Ⅳ类', 'Ⅴ类', '劣Ⅴ类', '劣V', '劣V类']
+    alert_count = snapshot_qs.filter(water_quality__in=poor_qualities).count()
 
     # 格式化告警数据
     alerts = []
@@ -151,8 +154,17 @@ def overview(request):
                 'online_devices': online_devices,
                 'offline_devices': offline_devices,
                 'alert_count': alert_count,
-                'avg_temperature': round(avg_temp, 1),
-                'avg_dissolved_oxygen': round(avg_do, 1),
+                'avg_temperature': _round_agg(avg_agg.get('avg_temperature'), 1),
+                'avg_ph': _round_agg(avg_agg.get('avg_ph'), 2),
+                'avg_dissolved_oxygen': _round_agg(avg_agg.get('avg_dissolved_oxygen'), 2),
+                'avg_conductivity': _round_agg(avg_agg.get('avg_conductivity'), 2),
+                'avg_turbidity': _round_agg(avg_agg.get('avg_turbidity'), 2),
+                'avg_permanganate_index': _round_agg(avg_agg.get('avg_permanganate'), 2),
+                'avg_ammonia_nitrogen': _round_agg(avg_agg.get('avg_ammonia_nitrogen'), 2),
+                'avg_total_phosphorus': _round_agg(avg_agg.get('avg_total_phosphorus'), 2),
+                'avg_total_nitrogen': _round_agg(avg_agg.get('avg_total_nitrogen'), 2),
+                'avg_chlorophyll_a': _round_agg(avg_agg.get('avg_chlorophyll_a'), 2),
+                'avg_algae_density': _round_agg(avg_agg.get('avg_algae_density'), 2),
                 'water_quality_distribution': water_quality_dist
             },
             'sensors': sensors,

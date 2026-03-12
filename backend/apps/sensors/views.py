@@ -357,6 +357,12 @@ class SensorDataViewSet(viewsets.ReadOnlyModelViewSet):
                 'dissolved_oxygen': float(record.dissolved_oxygen) if record.dissolved_oxygen is not None else None,
                 'conductivity': float(record.conductivity) if record.conductivity is not None else None,
                 'turbidity': float(record.turbidity) if record.turbidity is not None else None,
+                'permanganate_index': float(record.permanganate) if record.permanganate is not None else None,
+                'ammonia_nitrogen': float(record.ammonia_nitrogen) if record.ammonia_nitrogen is not None else None,
+                'total_phosphorus': float(record.total_phosphorus) if record.total_phosphorus is not None else None,
+                'total_nitrogen': float(record.total_nitrogen) if record.total_nitrogen is not None else None,
+                'chlorophyll_a': float(record.chlorophyll_a) if record.chlorophyll_a is not None else None,
+                'algae_density': float(record.algae_density) if record.algae_density is not None else None,
             })
 
         if manual_mode and history_data:
