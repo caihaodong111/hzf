@@ -35,6 +35,16 @@ export function getRealtimeData(
 }
 
 /**
+ * 获取省/市筛选级联选项（仅来源于数据库快照）
+ */
+export function getAreaOptions() {
+  return request({
+    url: '/sensors/data/area_options/',
+    method: 'get'
+  })
+}
+
+/**
  * 获取历史数据
  * @param {string} stationId - 站点ID
  * @param {number} hours - 小时数

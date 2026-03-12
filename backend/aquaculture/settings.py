@@ -202,6 +202,9 @@ LOGGING = {
 # National water data configuration (国家水质自动综合监管平台)
 NATIONAL_WATER_DATA_ENABLED = os.environ.get("NATIONAL_WATER_DATA_ENABLED", "true").lower() == "true"
 NATIONAL_WATER_DATA_CACHE_MINUTES = int(os.environ.get("NATIONAL_WATER_DATA_CACHE_MINUTES", "20"))
+NATIONAL_WATER_CITY_SLEEP_MS = int(os.environ.get("NATIONAL_WATER_CITY_SLEEP_MS", "50"))
+NATIONAL_WATER_CITY_TIMEOUT_S = int(os.environ.get("NATIONAL_WATER_CITY_TIMEOUT_S", "30"))
+NATIONAL_WATER_CITY_WORKERS = int(os.environ.get("NATIONAL_WATER_CITY_WORKERS", "8"))
 
 # Huawei water data configuration (华为云API市场 - 地表水监测数据)
 HUAWEI_WATER_DATA = {

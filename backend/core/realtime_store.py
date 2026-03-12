@@ -53,36 +53,44 @@ def _build_signature(data: Dict[str, Any], fields: Iterable[str]) -> Tuple[Any, 
     return tuple(_normalize_signature_value(data.get(field)) for field in fields)
 
 
-def _fetch_realtime(source: str, count: int) -> List[Dict[str, Any]]:
+def _fetch_realtime(source: str, count: int, force_refresh: bool) -> List[Dict[str, Any]]:
     if source == "national":
-        result = NationalWaterDataService.get_realtime(count=count, force_refresh=True)
+        result = NationalWaterDataService.get_realtime(count=count, force_refresh=force_refresh)
         return result.get("sensors", [])
     if source == "huawei":
         # 华为数据源强制刷新缓存，确保获取最新数据
-        result = HuaweiWaterDataService.get_realtime(count=count, force_refresh=True)
+        result = HuaweiWaterDataService.get_realtime(count=count, force_refresh=force_refresh)
         return result.get("sensors", [])
     return []
 
-def _fetch_realtime_with_city(source: str, count: int, with_city: bool) -> List[Dict[str, Any]]:
+def _fetch_realtime_with_city(
+    source: str,
+    count: int,
+    with_city: bool,
+    force_refresh: bool,
+    fetch_kwargs: Optional[Dict[str, Any]] = None,
+) -> List[Dict[str, Any]]:
     if source == "national":
         if not with_city:
             logger.info("national 数据源强制启用 with_city=True（已移除非城市抓取路径）")
             with_city = True
+        fetch_kwargs = fetch_kwargs or {}
         result = NationalWaterDataService.get_realtime(
             count=count,
-            force_refresh=True,
+            force_refresh=force_refresh,
             with_city=with_city,
+            **fetch_kwargs,
         )
         return result.get("sensors", [])
-    return _fetch_realtime(source, count)
+    return _fetch_realtime(source, count, force_refresh)
 
 
-def _pick_source(preferred: Optional[str], count: int) -> Tuple[str, List[Dict[str, Any]]]:
+def _pick_source(preferred: Optional[str], count: int, force_refresh: bool) -> Tuple[str, List[Dict[str, Any]]]:
     if preferred:
-        sensors = _fetch_realtime(preferred, count)
+        sensors = _fetch_realtime(preferred, count, force_refresh)
         return preferred, sensors
     for source in get_data_source_priority():
-        sensors = _fetch_realtime(source, count)
+        sensors = _fetch_realtime(source, count, force_refresh)
         if sensors:
             return source, sensors
     return "none", []
@@ -91,12 +99,14 @@ def _pick_source_with_city(
     preferred: Optional[str],
     count: int,
     with_city: bool,
+    force_refresh: bool,
+    fetch_kwargs: Optional[Dict[str, Any]] = None,
 ) -> Tuple[str, List[Dict[str, Any]]]:
     if preferred:
-        sensors = _fetch_realtime_with_city(preferred, count, with_city)
+        sensors = _fetch_realtime_with_city(preferred, count, with_city, force_refresh, fetch_kwargs)
         return preferred, sensors
     for source in get_data_source_priority():
-        sensors = _fetch_realtime_with_city(source, count, with_city)
+        sensors = _fetch_realtime_with_city(source, count, with_city, force_refresh, fetch_kwargs)
         if sensors:
             return source, sensors
     return "none", []
@@ -107,6 +117,11 @@ def sync_realtime_data(
     count: int = 1000,
     manual: bool = False,
     with_city: bool = False,
+    force_refresh: bool = True,
+    max_cities: int = 0,
+    sleep_ms: Optional[int] = None,
+    timeout_s: Optional[int] = None,
+    workers: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Fetch realtime data and store into auto/manual history tables."""
     normalized_source = (source or "").strip().lower() or None
@@ -117,7 +132,17 @@ def sync_realtime_data(
         for item in ("national", "huawei"):
             created = 0
             updated = 0
-            result = sync_realtime_data(source=item, count=count)
+            result = sync_realtime_data(
+                source=item,
+                count=count,
+                manual=manual,
+                with_city=with_city,
+                force_refresh=force_refresh,
+                max_cities=max_cities,
+                sleep_ms=sleep_ms,
+                timeout_s=timeout_s,
+                workers=workers,
+            )
             created = result.get("created", 0)
             updated = result.get("updated", 0)
             total_created += created
@@ -130,7 +155,23 @@ def sync_realtime_data(
             "results": results,
         }
 
-    selected_source, sensors = _pick_source_with_city(normalized_source, count, with_city)
+    fetch_kwargs: Dict[str, Any] = {}
+    if max_cities and max_cities > 0:
+        fetch_kwargs["max_cities"] = int(max_cities)
+    if sleep_ms is not None:
+        fetch_kwargs["sleep_ms"] = int(sleep_ms)
+    if timeout_s is not None:
+        fetch_kwargs["timeout_s"] = int(timeout_s)
+    if workers is not None:
+        fetch_kwargs["workers"] = int(workers)
+
+    selected_source, sensors = _pick_source_with_city(
+        normalized_source,
+        count,
+        with_city,
+        force_refresh=force_refresh,
+        fetch_kwargs=fetch_kwargs or None,
+    )
     if not sensors:
         logger.warning(f"数据源 {selected_source} 未获取到传感器数据")
         return {"source": selected_source, "created": 0, "updated": 0}

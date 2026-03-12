@@ -4,12 +4,14 @@
 """
 from __future__ import annotations
 
+import concurrent.futures
 import hashlib
 import json
 import logging
 import math
 import re
 import ssl
+import threading
 import time
 import urllib.parse
 import urllib.request
@@ -603,6 +605,7 @@ class NationalWaterDataAPI:
         max_cities: int = 0,
         sleep_ms: int = 0,
         timeout_s: int = 30,
+        workers: int = 0,
     ) -> List[WaterQualityRecord]:
         """按城市拉取水质数据，并在记录中补充 city 字段。
 
@@ -618,18 +621,31 @@ class NationalWaterDataAPI:
         if max_cities and max_cities > 0:
             entries = entries[:max_cities]
 
+        try:
+            resolved_workers = int(workers or getattr(settings, "NATIONAL_WATER_CITY_WORKERS", 8))
+        except (TypeError, ValueError):
+            resolved_workers = 8
+        resolved_workers = max(1, min(resolved_workers, 32))
+
         logger.info(
-            "国家水质按城市抓取开始: cities=%s sleep_ms=%s timeout_s=%s force_refresh=%s",
+            "国家水质按城市抓取开始: cities=%s sleep_ms=%s timeout_s=%s workers=%s force_refresh=%s",
             len(entries),
             sleep_ms,
             timeout_s,
+            resolved_workers,
             force_refresh,
         )
 
         all_records: List[WaterQualityRecord] = []
         sleep_s = max(sleep_ms, 0) / 1000.0
 
-        for idx, (_province_name, _province_code, city_name, city_code) in enumerate(entries, start=1):
+        started = time.perf_counter()
+        completed = 0
+        failed = 0
+        lock = threading.Lock()
+
+        def fetch_one(entry: Tuple[str, str, str, str]) -> Tuple[str, int, List[WaterQualityRecord]]:
+            _province_name, _province_code, city_name, city_code = entry
             data = self._http_post_form_json(
                 self.API_URL,
                 {
@@ -644,29 +660,68 @@ class NationalWaterDataAPI:
             )
             tbody = data.get("tbody") or []
             if not isinstance(tbody, list) or not tbody:
-                if idx == 1 or idx % 30 == 0 or idx == len(entries):
-                    logger.info("国家水质按城市抓取进度: %s/%s city=%s rows=0", idx, len(entries), city_name)
-                if sleep_s and idx < len(entries):
-                    time.sleep(sleep_s)
-                continue
+                return city_name, 0, []
 
+            records: List[WaterQualityRecord] = []
             for row in tbody:
                 record = self._parse_record(row, city=city_name)
-                if not record:
-                    continue
-                all_records.append(record)
+                if record:
+                    records.append(record)
+            return city_name, len(tbody), records
 
-            if idx == 1 or idx % 30 == 0 or idx == len(entries):
-                logger.info(
-                    "国家水质按城市抓取进度: %s/%s city=%s rows=%s total=%s",
-                    idx,
-                    len(entries),
-                    city_name,
-                    len(tbody),
-                    len(all_records),
-                )
-            if sleep_s and idx < len(entries):
-                time.sleep(sleep_s)
+        def log_progress(city_name: str, rows: int) -> None:
+            nonlocal completed, failed
+            elapsed_s = max(time.perf_counter() - started, 0.000001)
+            rate = completed / elapsed_s
+            eta_s = int((len(entries) - completed) / rate) if rate > 0 else -1
+            logger.info(
+                "国家水质按城市抓取进度: %s/%s city=%s rows=%s total=%s failed=%s rate=%.2f/s eta_s=%s",
+                completed,
+                len(entries),
+                city_name,
+                rows,
+                len(all_records),
+                failed,
+                rate,
+                eta_s,
+            )
+
+        if resolved_workers <= 1 or len(entries) <= 1:
+            for idx, entry in enumerate(entries, start=1):
+                city_name, rows, records = fetch_one(entry)
+                all_records.extend(records)
+                completed = idx
+                if idx == 1 or idx % 30 == 0 or idx == len(entries):
+                    log_progress(city_name, rows)
+                if sleep_s and idx < len(entries):
+                    time.sleep(sleep_s)
+        else:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=resolved_workers) as executor:
+                future_to_city: Dict[concurrent.futures.Future, str] = {}
+                for entry in entries:
+                    city_name = entry[2]
+                    future_to_city[executor.submit(fetch_one, entry)] = city_name
+                    if sleep_s:
+                        time.sleep(sleep_s)
+
+                for future in concurrent.futures.as_completed(future_to_city):
+                    city_name = future_to_city[future]
+                    try:
+                        _, rows, records = future.result()
+                        with lock:
+                            all_records.extend(records)
+                            completed += 1
+                            should_log = completed == 1 or completed % 30 == 0 or completed == len(entries)
+                        if should_log:
+                            log_progress(city_name, rows)
+                    except Exception as exc:
+                        with lock:
+                            completed += 1
+                            failed += 1
+                            should_log = completed == 1 or completed % 30 == 0 or completed == len(entries)
+                        logger.warning("国家水质按城市抓取失败: city=%s err=%s", city_name, exc)
+                        if should_log:
+                            log_progress(city_name, 0)
 
         self._city_cache["records"] = all_records
         self._city_cache["fetched_at"] = dj_timezone.now()
@@ -753,6 +808,7 @@ class NationalWaterDataService:
                 max_cities=int(filters.get("max_cities") or 0),
                 sleep_ms=int(filters.get("sleep_ms") or getattr(settings, "NATIONAL_WATER_CITY_SLEEP_MS", 50)),
                 timeout_s=int(filters.get("timeout_s") or getattr(settings, "NATIONAL_WATER_CITY_TIMEOUT_S", 30)),
+                workers=int(filters.get("workers") or getattr(settings, "NATIONAL_WATER_CITY_WORKERS", 8)),
             )
         else:
             records = _api_instance.fetch_records(

@@ -31,7 +31,8 @@
       "Bash(pip3 list:*)",
       "Bash(conda info:*)",
       "Bash(xargs kill:*)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Bash(find:*)"
     ]
   }
 }

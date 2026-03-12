@@ -25,6 +25,7 @@ from core.data_source_preference import get_allowed_sources, get_data_source_pri
 from core.realtime_store import sync_realtime_data
 from core.city_matcher import matches_city
 from core.city_resolver import infer_city_name, resolve_area_name
+from core.national_water_data import AREA_CODES
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +61,54 @@ class SensorDataViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = SensorData.objects.all()
     serializer_class = SensorDataSerializer
 
+    @action(detail=False, methods=['get'])
+    def area_options(self, request):
+        """返回省/市级联筛选选项（仅基于数据库快照，不触发外部抓取）。"""
+        allowed_sources = get_allowed_sources()
+        snapshot_qs = SensorSnapshot.objects.exclude(station_id__isnull=True)
+        if allowed_sources:
+            snapshot_qs = snapshot_qs.filter(data_source__in=allowed_sources)
+
+        province_to_cities = {}
+        for province, city in snapshot_qs.values_list("province", "city").distinct():
+            province_name = str(province or "").strip()
+            city_name = str(city or "").strip()
+            if not province_name:
+                continue
+            bucket = province_to_cities.setdefault(province_name, set())
+            if city_name:
+                bucket.add(city_name)
+
+        province_name_to_code = {
+            str(name).strip(): str(code).strip()
+            for name, code in AREA_CODES.items()
+            if name and code and name != "全国"
+        }
+
+        def province_sort_key(name: str):
+            code = province_name_to_code.get(name) or "999999"
+            return (0 if code != "999999" else 1, code, name)
+
+        options = [{"code": "", "name": "全国", "children": []}]
+        for province_name in sorted(province_to_cities.keys(), key=province_sort_key):
+            options.append(
+                {
+                    "code": province_name_to_code.get(province_name, ""),
+                    "name": province_name,
+                    "children": sorted(province_to_cities.get(province_name) or []),
+                }
+            )
+
+        return Response(
+            {
+                "code": 200,
+                "message": "success",
+                "data": {
+                    "options": options,
+                },
+            }
+        )
+
     def get_queryset(self):
         queryset = super().get_queryset()
         station_id = self.request.query_params.get('station_id') or self.request.query_params.get('device_id')
@@ -89,67 +138,31 @@ class SensorDataViewSet(viewsets.ReadOnlyModelViewSet):
         base_queryset = SensorSnapshot.objects.all()
         if allowed_sources:
             base_queryset = base_queryset.filter(data_source__in=allowed_sources)
+        if search_name:
+            base_queryset = base_queryset.filter(station_name__icontains=search_name)
 
-        use_source_filter = (not manual_mode) and (area_id or river_id or search_name or city_name)
-        source_filter_applied = False
-        if use_source_filter:
-            station_ids = set()
-            source_available = False
-            if HuaweiWaterDataService.enabled():
-                source_available = True
-                try:
-                    from core.huawei_water_data import fetch_records as huawei_fetch_records
-                    huawei_records = huawei_fetch_records()
-                    station_ids.update(
-                        (getattr(record, "station_id", None) or getattr(record, "device_id", None))
-                        for record in huawei_records
-                        if getattr(record, "station_id", None) or getattr(record, "device_id", None)
-                    )
-                except Exception:
-                    pass
-            if NationalWaterDataService.enabled():
-                source_available = True
-                try:
-                    records = NationalWaterDataService.api().fetch_records(
-                        area_id=area_id,
-                        river_id=river_id,
-                        search_name=search_name,
-                        city_name=city_name,
-                        force_refresh=force_refresh,
-                        max_pages=10,
-                    )
-                    station_ids.update(
-                        (getattr(record, "station_id", None) or getattr(record, "device_id", None))
-                        for record in records
-                        if getattr(record, "station_id", None) or getattr(record, "device_id", None)
-                    )
-                except Exception:
-                    pass
-            if source_available:
-                source_filter_applied = True
-                if station_ids:
-                    base_queryset = base_queryset.filter(station_id__in=station_ids)
-                else:
-                    base_queryset = base_queryset.none()
+        area_name = resolve_area_name(area_id)
+        if area_name:
+            if area_id.endswith("0000"):
+                base_queryset = base_queryset.filter(province__icontains=area_name)
+            else:
+                base_queryset = base_queryset.filter(
+                    Q(city__icontains=area_name) |
+                    Q(location__icontains=area_name) |
+                    Q(station_name__icontains=area_name) |
+                    Q(province__icontains=area_name)
+                )
 
-        if not source_filter_applied:
-            if search_name:
-                base_queryset = base_queryset.filter(station_name__icontains=search_name)
-            area_name = resolve_area_name(area_id)
-            if area_name:
-                if area_id.endswith("0000"):
-                    base_queryset = base_queryset.filter(province__icontains=area_name)
-                else:
-                    base_queryset = base_queryset.filter(
-                        Q(city__icontains=area_name) |
-                        Q(location__icontains=area_name) |
-                        Q(station_name__icontains=area_name) |
-                        Q(province__icontains=area_name)
-                    )
-            if river_id:
-                base_queryset = base_queryset.filter(river_basin__icontains=river_id)
+        if river_id:
+            base_queryset = base_queryset.filter(river_basin__icontains=river_id)
 
-        city_post_filter = bool(city_name) and not source_filter_applied
+        if city_name:
+            base_queryset = base_queryset.filter(
+                Q(city__icontains=city_name) |
+                Q(location__icontains=city_name) |
+                Q(station_name__icontains=city_name) |
+                Q(province__icontains=city_name)
+            )
 
         sensors = []
         latest_time = None
@@ -191,7 +204,7 @@ class SensorDataViewSet(viewsets.ReadOnlyModelViewSet):
             transformed["_recorded_at"] = record.recorded_at
             sensors.append(transformed)
 
-        if city_name and (manual_mode or city_post_filter):
+        if city_name:
             sensors = [
                 sensor for sensor in sensors
                 if matches_city(
@@ -244,17 +257,45 @@ class SensorDataViewSet(viewsets.ReadOnlyModelViewSet):
             count = 1000
         manual = payload.get('manual', True)
         with_city = payload.get('with_city', False)
+        force_refresh = payload.get('force_refresh', True)
+        max_cities = payload.get('max_cities', 0)
+        sleep_ms = payload.get('sleep_ms')
+        timeout_s = payload.get('timeout_s')
+        workers = payload.get('workers')
         if isinstance(manual, str):
             manual = manual.strip().lower() in ('1', 'true', 'yes')
         if isinstance(with_city, str):
             with_city = with_city.strip().lower() in ('1', 'true', 'yes')
+        if isinstance(force_refresh, str):
+            force_refresh = force_refresh.strip().lower() in ('1', 'true', 'yes')
+        try:
+            max_cities = int(max_cities or 0)
+        except (TypeError, ValueError):
+            max_cities = 0
+        try:
+            sleep_ms = None if sleep_ms is None or sleep_ms == "" else int(sleep_ms)
+        except (TypeError, ValueError):
+            sleep_ms = None
+        try:
+            timeout_s = None if timeout_s is None or timeout_s == "" else int(timeout_s)
+        except (TypeError, ValueError):
+            timeout_s = None
+        try:
+            workers = None if workers is None or workers == "" else int(workers)
+        except (TypeError, ValueError):
+            workers = None
         client_ip = request.META.get('HTTP_X_FORWARDED_FOR') or request.META.get('REMOTE_ADDR') or '-'
         logger.info(
-            "sync_realtime triggered: source=%s count=%s manual=%s with_city=%s ip=%s",
+            "sync_realtime triggered: source=%s count=%s manual=%s with_city=%s force_refresh=%s max_cities=%s sleep_ms=%s timeout_s=%s workers=%s ip=%s",
             source,
             count,
             bool(manual),
             bool(with_city),
+            bool(force_refresh),
+            max_cities,
+            sleep_ms,
+            timeout_s,
+            workers,
             client_ip,
         )
         result = sync_realtime_data(
@@ -262,6 +303,11 @@ class SensorDataViewSet(viewsets.ReadOnlyModelViewSet):
             count=count,
             manual=bool(manual),
             with_city=bool(with_city),
+            force_refresh=bool(force_refresh),
+            max_cities=max_cities,
+            sleep_ms=sleep_ms,
+            timeout_s=timeout_s,
+            workers=workers,
         )
         logger.info(
             "sync_realtime finished: source=%s created=%s updated=%s",
