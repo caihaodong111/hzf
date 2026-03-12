@@ -647,7 +647,7 @@ $text-sub: #64748b;
 }
 
 .dashboard-content {
-  padding: 36px 40px 48px;
+  padding: 18px 22px 24px;
   position: relative;
   z-index: 1;
 }
@@ -656,10 +656,10 @@ $text-sub: #64748b;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 32px;
+  margin-bottom: 16px;
 
   h1 {
-    font-size: 26px;
+    font-size: 22px;
     font-weight: 700;
     margin: 0;
     letter-spacing: -0.6px;
@@ -667,26 +667,26 @@ $text-sub: #64748b;
 
   p {
     color: $text-sub;
-    margin: 6px 0 0 0;
-    font-size: 13px;
+    margin: 4px 0 0 0;
+    font-size: 12px;
   }
 
   .top-actions {
     display: flex;
-    gap: 16px;
+    gap: 10px;
 
     .action-btn {
       background: $glass-bg;
       border: 1px solid $glass-border;
-      border-radius: 12px;
-      padding: 8px 12px;
+      border-radius: 10px;
+      padding: 6px 10px;
       cursor: pointer;
       color: $text-main;
     }
 
     .manual-btn {
-      padding: 8px 16px;
-      font-size: 13px;
+      padding: 6px 12px;
+      font-size: 12px;
       font-weight: 600;
       letter-spacing: 0.4px;
     }
@@ -702,18 +702,18 @@ $text-sub: #64748b;
   background: $glass-bg;
   backdrop-filter: blur(16px);
   border: 1px solid $glass-border;
-  border-radius: 24px;
+  border-radius: 18px;
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.04);
 }
 
 .metrics-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 20px;
-  margin-bottom: 24px;
+  gap: 12px;
+  margin-bottom: 14px;
 
   .metric-card {
-    padding: 20px 22px;
+    padding: 14px 16px;
 
     .metric-header {
       display: flex;
@@ -721,7 +721,7 @@ $text-sub: #64748b;
       align-items: center;
 
       .label {
-        font-size: 13px;
+        font-size: 12px;
         color: $text-sub;
       }
 
@@ -748,8 +748,8 @@ $text-sub: #64748b;
     }
 
     .value {
-      font-size: 30px;
-      margin: 14px 0;
+      font-size: 26px;
+      margin: 10px 0;
       font-weight: 700;
     }
   }
@@ -757,7 +757,7 @@ $text-sub: #64748b;
 
 .sparkline-svg {
   width: 100%;
-  height: 32px;
+  height: 26px;
 
   polyline {
     fill: none;
@@ -782,23 +782,23 @@ $text-sub: #64748b;
 .content-grid {
   display: grid;
   grid-template-columns: 1fr;
-  gap: 20px;
-  margin-bottom: 20px;
+  gap: 12px;
+  margin-bottom: 12px;
 }
 
 .data-panel {
-  padding: 22px 24px;
+  padding: 14px 16px;
   width: 100%;
   overflow: hidden;
 
   .panel-header {
     display: flex;
     justify-content: space-between;
-    margin-bottom: 16px;
+    margin-bottom: 10px;
 
     h3 {
       margin: 0;
-      font-size: 18px;
+      font-size: 16px;
     }
 
   }
@@ -806,8 +806,8 @@ $text-sub: #64748b;
 
 .panel-filters {
   display: flex;
-  gap: 10px;
-  margin-bottom: 14px;
+  gap: 8px;
+  margin-bottom: 10px;
   align-items: center;
 
   :deep(.el-input__wrapper) {
@@ -824,8 +824,8 @@ $text-sub: #64748b;
   display: inline-flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 14px;
-  min-width: 120px;
+  padding: 6px 12px;
+  min-width: 110px;
   border-radius: 8px;
   border: 1px solid #c8c8c8;
   background: #d9d9d9;
@@ -840,7 +840,7 @@ $text-sub: #64748b;
 }
 
 .cascader-trigger .trigger-text {
-  font-size: 14px;
+  font-size: 13px;
   white-space: nowrap;
 }
 
@@ -927,18 +927,18 @@ $text-sub: #64748b;
 .segment-search {
   display: flex;
   align-items: center;
-  padding: 8px 12px;
+  padding: 6px 10px;
   padding-right: 0;
   border: 1px solid #d1d5db;
   border-radius: 8px;
   background: #ffffff;
-  min-width: 220px;
+  min-width: 200px;
 
   input {
     border: none;
     outline: none;
     width: 100%;
-    font-size: 14px;
+    font-size: 13px;
     color: #1f2937;
 
     &::placeholder {
@@ -951,13 +951,13 @@ $text-sub: #64748b;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 8px 16px;
-  margin-left: 10px;
+  padding: 6px 12px;
+  margin-left: 6px;
   border: 1px solid #d1d5db;
   border-radius: 8px;
   background: #ffffff;
   color: #1f2937;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 500;
   cursor: pointer;
   transition: all 0.2s ease;
@@ -1061,7 +1061,7 @@ $text-sub: #64748b;
   overflow-y: hidden;
   width: 100%;
   max-width: 100%;
-  padding-bottom: 6px;
+  padding-bottom: 4px;
   position: relative;
 
   .list-header {
@@ -1084,8 +1084,8 @@ $text-sub: #64748b;
       110px
       120px
       60px;
-    padding: 10px 0;
-    font-size: 12px;
+    padding: 6px 0;
+    font-size: 11px;
     color: #94a3b8;
     border-bottom: 1px solid rgba(0, 0, 0, 0.05);
     min-width: 1600px;
@@ -1094,7 +1094,7 @@ $text-sub: #64748b;
 
   .list-body {
     position: relative;
-    height: clamp(300px, 42vh, 520px);
+    height: clamp(340px, 56vh, 720px);
     overflow: hidden;
     min-width: 1600px;
     width: max-content;
@@ -1136,17 +1136,17 @@ $text-sub: #64748b;
       110px
       120px
       60px;
-    padding: 16px 0;
+    padding: 10px 0;
     border-bottom: 1px solid rgba(0, 0, 0, 0.03);
     align-items: center;
-    font-size: 14px;
+    font-size: 12px;
     transition: 0.2s;
     min-width: 1600px;
     width: max-content;
 
     &:hover {
       background: rgba(255, 255, 255, 0.3);
-      transform: scale(1.01);
+      transform: scale(1.005);
     }
 
     .name {
@@ -1368,7 +1368,7 @@ $text-sub: #64748b;
 
 @media (max-width: 900px) {
   .dashboard-content {
-    padding: 24px 18px 32px;
+    padding: 14px 12px 18px;
   }
 
   .metrics-grid {
