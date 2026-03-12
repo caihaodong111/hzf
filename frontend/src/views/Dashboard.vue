@@ -175,13 +175,17 @@ import { getDataSourceSettings } from '@/api/settings'
 import sensorStore from '@/stores/sensorStore'
 import { DataLine, Warning, Refresh, CircleCheck, ArrowDown, Search } from '@element-plus/icons-vue'
 
-const loading = ref(false)
+const loading = computed(() => sensorStore.tasks.realtime.loading.value)
 const sensors = ref([])
 const total = ref(0)
 const dataSourceMode = ref('auto')
 const isManualFetching = ref(false)
-const isRefreshing = ref(false)
+const isRefreshing = computed(() => (
+  sensorStore.tasks.realtime.loading.value || sensorStore.tasks.sync.loading.value
+))
 const updateLog = ref([])
+const disposed = ref(false)
+const realtimeLoadSeq = ref(0)
 
 const filters = ref({
   province: '',
@@ -385,14 +389,13 @@ const stats = computed(() => [
 ])
 
 const loadRealtimeData = async (forceRefresh = false) => {
+  realtimeLoadSeq.value += 1
+  const seq = realtimeLoadSeq.value
   // 只有在不强制刷新且没有筛选条件时才使用缓存
   if (!forceRefresh && sensorStore.isCacheValid() && sensorStore.cache.sensors.value.length > 0) {
     sensors.value = sensorStore.cache.sensors.value
     total.value = sensorStore.cache.total.value
   }
-
-  loading.value = true
-  isRefreshing.value = true
 
   try {
     const searchName = filters.value.search
@@ -408,8 +411,20 @@ const loadRealtimeData = async (forceRefresh = false) => {
         forceRefresh ? '' : lastVersion
       ),
       forceRefresh,
-      { checkUpdate: true }
+      {
+        checkUpdate: true,
+        taskKey: JSON.stringify({
+          count: 100,
+          area_id: filters.value.province,
+          river_id: filters.value.river,
+          search_name: searchName,
+          city_name: selectedProvinceChild.value,
+          force_refresh: Boolean(forceRefresh)
+        })
+      }
     )
+
+    if (disposed.value || seq !== realtimeLoadSeq.value) return
 
     if (res.code === 200) {
       const newSensors = res.data.sensors || []
@@ -482,9 +497,6 @@ const loadRealtimeData = async (forceRefresh = false) => {
     }
   } catch (error) {
     console.error('加载实时数据失败:', error)
-  } finally {
-    loading.value = false
-    isRefreshing.value = false
   }
 }
 
@@ -499,13 +511,16 @@ const loadDataSourceMode = async () => {
 
 const handleManualRefresh = async () => {
   if (isRefreshing.value) return
-  isRefreshing.value = true
   if (isManualMode.value) {
     loadRealtimeData(true)
     return
   }
   try {
-    await syncRealtimeData('national', 0, false, true)
+    await sensorStore.runTask(
+      'sync',
+      () => syncRealtimeData('national', 0, false, true),
+      { taskKey: 'sync:national' }
+    )
   } catch (error) {
     console.error('触发国家水质数据刷新失败:', error)
   }
@@ -599,6 +614,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  disposed.value = true
   document.removeEventListener('click', handleClickOutside)
 })
 </script>
