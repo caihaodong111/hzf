@@ -124,6 +124,17 @@ GET /api/v1/devices/
 ```
 GET /api/v1/dashboard/overview/
 ```
+说明：
+- `data.summary` 的统计口径来自 `sensor_data_latest`（最新快照表，SensorSnapshot）。
+- `data.sensors` 为预览列表（默认取最近 `count=10` 条快照），不代表全部断面。
+- `POST /api/v1/dashboard/ai-insight/` 会在服务端以 `sensor_data_latest` 快照构建 AI 上下文。
+
+## 地图标点（经纬度）
+
+- 后端会在入库时优先从 `station_locations`（站点坐标缓存表）匹配经纬度；缺失时可调用高德地理编码并回写缓存表。
+- 后端配置环境变量：`AMAP_WEB_SERVICE_KEY`（必填；兼容旧名 `AMAP_API_KEY`），可选 `AMAP_GEOCODE_ENABLED=true/false`、`AMAP_GEOCODE_ENABLED_WITH_CITY=true/false`、`AMAP_GEOCODE_MAX_SECTIONS=300`。
+- 前端配置：`VITE_AMAP_JS_API_KEY` + `VITE_AMAP_SECURITY_CODE`（注意 JS Key 不能用于后端 Web 服务 API，否则会报 `10009 USERKEY_PLAT_NOMATCH`）。
+- 批量补齐（从 `sensor_data_latest` 出发写入 `station_locations`，并可回写快照坐标；全量处理用 `--limit 0`）：`python manage.py geocode_station_locations --limit 0 --batch-size 300 --update-snapshot --prefer-location`
 
 ## 数据库配置
 

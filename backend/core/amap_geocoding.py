@@ -6,6 +6,7 @@ API文档: https://lbs.amap.com/api/webservice/guide/api/georegeo
 from __future__ import annotations
 
 import logging
+import re
 import time
 from typing import Dict, Optional, Tuple
 from urllib.parse import urlencode
@@ -31,9 +32,25 @@ class AmapGeocodingService:
         Args:
             api_key: 高德地图API Key，如果不提供则从配置中读取
         """
-        self.api_key = api_key or getattr(settings, "AMAP_API_KEY", "e447cc4ddd22a3be365c4207f6bc3e07")
+        # 高德 Web 服务 API 需要“Web服务 Key”，不能用 JS API Key，否则会报 10009 USERKEY_PLAT_NOMATCH
+        settings_key = (
+            getattr(settings, "AMAP_WEB_SERVICE_KEY", None)
+            or getattr(settings, "AMAP_API_KEY", None)
+        )
+        self.api_key = (api_key or settings_key or "").strip()
         self._request_count = 0
         self._last_request_time = 0
+
+    def _normalize_place_query(self, value: str) -> str:
+        text = str(value or "").strip()
+        if not text:
+            return ""
+        # 统一括号字符，减少搜索噪音
+        text = text.replace("（", "(").replace("）", ")")
+        # 去掉常见泛化后缀
+        text = re.sub(r"(监测)?断面$", "", text)
+        text = re.sub(r"\s+", " ", text).strip()
+        return text
 
     def _check_rate_limit(self) -> None:
         """检查并处理API请求频率限制
@@ -59,31 +76,42 @@ class AmapGeocodingService:
         Returns:
             API响应数据，失败返回None
         """
-        self._check_rate_limit()
-
+        if not self.api_key:
+            logger.warning("未配置高德 Web 服务 Key（AMAP_WEB_SERVICE_KEY / AMAP_API_KEY），跳过地理编码请求。")
+            return None
         url = f"{AMAP_API_BASE}/{endpoint}"
-        params['key'] = self.api_key
+        params["key"] = self.api_key
 
-        try:
-            response = requests.get(url, params=params, timeout=10)
-            response.raise_for_status()
-            data = response.json()
+        # 一些错误（如 30001 ENGINE_RESPONSE_DATA_ERROR）是高德侧引擎抖动，短暂重试通常可恢复。
+        max_attempts = 3
+        for attempt in range(1, max_attempts + 1):
+            self._check_rate_limit()
+            try:
+                response = requests.get(url, params=params, timeout=10)
+                response.raise_for_status()
+                data = response.json()
 
-            # 检查API返回状态
-            if data.get('status') == '1' or data.get('status') == 1:
-                return data
-            else:
-                error_code = data.get('infocode', 'unknown')
-                error_info = data.get('info', 'unknown error')
+                if data.get("status") == "1" or data.get("status") == 1:
+                    return data
+
+                error_code = str(data.get("infocode", "unknown"))
+                error_info = data.get("info", "unknown error")
                 logger.warning(f"高德地图API返回错误: code={error_code}, info={error_info}")
+
+                if error_code in {"30001"} and attempt < max_attempts:
+                    time.sleep(0.4 * attempt)
+                    continue
                 return None
 
-        except requests.exceptions.RequestException as e:
-            logger.error(f"高德地图API请求失败: {e}")
-            return None
-        except Exception as e:
-            logger.error(f"高德地图API处理失败: {e}")
-            return None
+            except requests.exceptions.RequestException as e:
+                if attempt < max_attempts:
+                    time.sleep(0.4 * attempt)
+                    continue
+                logger.error(f"高德地图API请求失败: {e}")
+                return None
+            except Exception as e:
+                logger.error(f"高德地图API处理失败: {e}")
+                return None
 
     def geocode(self, address: str, city: str = None) -> Optional[Tuple[float, float]]:
         """地理编码：将地址转换为经纬度坐标
@@ -137,6 +165,72 @@ class AmapGeocodingService:
         logger.warning(f"地理编码失败: {address} ({city})")
         return None
 
+    def place_text(
+        self,
+        keywords: str,
+        city: str = None,
+        citylimit: bool = True,
+        offset: int = 10,
+    ) -> Optional[Tuple[float, float]]:
+        """
+        POI 关键字搜索（对“桥/闸/水库/大桥”等站点名更友好，优先于 geocode/geo）。
+
+        文档: https://lbs.amap.com/api/webservice/guide/api/search
+        """
+        query = self._normalize_place_query(keywords)
+        if not query:
+            return None
+
+        cache_key = f"amap_place_text:{query}:{city or ''}:{int(citylimit)}"
+        cached_result = cache.get(cache_key)
+        if cached_result:
+            return cached_result
+
+        params: Dict[str, object] = {
+            "keywords": query,
+            "offset": int(offset),
+            "page": 1,
+            "extensions": "base",
+        }
+        if city:
+            params["city"] = city
+            params["citylimit"] = "true" if citylimit else "false"
+
+        result = self._make_request("place/text", params)
+        pois = (result or {}).get("pois") or []
+        if not pois:
+            return None
+
+        def parse_location(loc: str) -> Optional[Tuple[float, float]]:
+            if not loc:
+                return None
+            parts = loc.split(",")
+            if len(parts) != 2:
+                return None
+            try:
+                return (float(parts[0]), float(parts[1]))
+            except ValueError:
+                return None
+
+        def is_gov_poi(poi: Dict) -> bool:
+            name = str(poi.get("name") or "")
+            return any(token in name for token in ("人民政府", "市政府", "区政府", "县政府"))
+
+        picked = None
+        for poi in pois:
+            if is_gov_poi(poi):
+                continue
+            picked = poi
+            break
+        if picked is None:
+            picked = pois[0]
+
+        coords = parse_location(picked.get("location", ""))
+        if coords:
+            cache.set(cache_key, coords, 86400)
+            return coords
+        return None
+
     def geocode_section(self, section_name: str, province: str = None, city: str = None) -> Optional[Tuple[float, float]]:
         """地理编码：专门用于水质断面
 
@@ -148,8 +242,18 @@ class AmapGeocodingService:
         Returns:
             (经度, 纬度) 元组，失败返回None
         """
+        section_name = self._normalize_place_query(section_name)
+        if not section_name:
+            return None
+
         # 构建搜索地址，尝试多种组合
         search_addresses = []
+
+        # 0. 优先用 POI 搜索（对桥/闸/水库等更准确）
+        scope = city or province
+        poi_coords = self.place_text(section_name, city=scope, citylimit=True)
+        if poi_coords:
+            return poi_coords
 
         # 1. 断面名称 + 城市（最准确）
         if city:
@@ -176,6 +280,10 @@ class AmapGeocodingService:
         for address in search_addresses:
             # 使用城市或省份作为查询范围
             search_city = city or province
+            # POI 搜索一次（带上组合地址）
+            poi_coords = self.place_text(address, city=search_city, citylimit=True)
+            if poi_coords:
+                return poi_coords
             result = self.geocode(address, search_city)
             if result:
                 return result
@@ -199,6 +307,7 @@ class AmapGeocodingService:
         for section_name in sections:
             if isinstance(section_name, dict):
                 name = section_name.get("name") or section_name.get("station_name") or section_name.get("device_name")
+                query = section_name.get("query") or section_name.get("location") or name
                 key = (
                     section_name.get("key")
                     or section_name.get("station_id")
@@ -209,14 +318,15 @@ class AmapGeocodingService:
                 section_province = section_name.get("province") or province
             else:
                 name = section_name
+                query = name
                 key = section_name
                 section_city = city
                 section_province = province
 
-            if not name:
+            if not query:
                 continue
 
-            coords = self.geocode_section(name, section_province, section_city)
+            coords = self.geocode_section(query, section_province, section_city)
             if coords:
                 results[key] = coords
             # 避免请求过快

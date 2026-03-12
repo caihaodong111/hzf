@@ -6,134 +6,136 @@
       <header class="ai-header">
         <div>
           <h1>AI 智能分析</h1>
-          <p>结合实时水质数据输出风险研判与运维建议</p>
+          <p>基于最新水质快照输出风险研判与建议</p>
         </div>
-        <button class="ghost-btn" type="button" @click="loadOverview" :disabled="loadingOverview">
-          {{ loadingOverview ? '刷新中...' : '刷新数据' }}
-        </button>
+        <div class="header-actions">
+          <div class="update-tag" v-if="overviewTimestamp">
+            <span class="dot" :class="{ active: !loadingOverview }"></span>
+            <span>更新于 {{ overviewTimestamp }}</span>
+          </div>
+          <button class="refresh-btn" type="button" @click="loadOverview" :disabled="loadingOverview">
+            <span class="icon">↻</span> {{ loadingOverview ? '更新中' : '刷新' }}
+          </button>
+        </div>
       </header>
 
-      <section class="ai-grid">
-        <div class="panel glass-card">
-          <div class="panel-title">问题输入</div>
-          <div class="quick-tags">
-            <button
-              v-for="item in quickPrompts"
-              :key="item"
-              type="button"
-              class="tag-btn"
-              @click="applyPrompt(item)"
-            >
-              {{ item }}
+      <main class="ai-main">
+      <aside class="side-panel">
+        <div class="stat-group">
+          <div class="stat-card" v-for="(val, label) in summaryMap" :key="label">
+            <span class="label">{{ label }}</span>
+            <span class="value">{{ val }}</span>
+          </div>
+        </div>
+
+        <div class="side-tip">
+          提示：选择下方推荐问题可一键提问。
+        </div>
+      </aside>
+
+      <section class="chat-section">
+        <div class="chat-header">
+          <h2>对话研判</h2>
+          <button class="clear-btn" @click="clearChat" v-if="messages.length > 0">清空</button>
+        </div>
+
+        <div class="chat-viewport" ref="chatBodyRef">
+          <div v-if="messages.length === 0" class="welcome-view">
+            <div class="ai-avatar">AI</div>
+            <h3>您好，我是水质分析助手</h3>
+            <p>您可以询问关于水质异常、断面风险或周报建议等问题。</p>
+
+            <div class="suggestion-grid">
+              <button
+                v-for="item in quickPrompts"
+                :key="item"
+                @click="applyPrompt(item)"
+                class="suggest-item"
+                type="button"
+              >
+                {{ item }}
+              </button>
+            </div>
+          </div>
+
+          <div v-else class="message-list">
+            <div v-for="(msg, idx) in messages" :key="idx" :class="['msg-wrapper', msg.role]">
+              <div class="msg-bubble">
+                <div class="msg-content">{{ msg.content }}</div>
+                <div class="msg-time" v-if="msg.time">{{ msg.time }}</div>
+              </div>
+            </div>
+
+            <div v-if="loading" class="msg-wrapper assistant">
+              <div class="msg-bubble loading-bubble">
+                <div class="typing-dots">
+                  <span></span><span></span><span></span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <footer class="input-area">
+          <div class="input-wrapper">
+            <textarea
+              v-model="question"
+              placeholder="输入水质分析相关问题..."
+              @keydown.enter.exact.prevent="askAi"
+              rows="1"
+              ref="inputRef"
+            ></textarea>
+            <button class="send-btn" :disabled="!question.trim() || loading" @click="askAi" type="button">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z" />
+              </svg>
             </button>
           </div>
-
-          <textarea
-            v-model="question"
-            class="question-input"
-            rows="6"
-            placeholder="例如：请基于当前水质数据，给出风险点位与增氧建议。"
-          ></textarea>
-
-          <div class="panel-actions">
-            <button class="primary-btn" type="button" @click="askAi" :disabled="loading">
-              {{ loading ? '分析中...' : '生成分析' }}
-            </button>
-            <span class="helper-text" v-if="overviewTimestamp">
-              数据时间：{{ overviewTimestamp }}
-            </span>
-          </div>
-
-          <div class="context-summary">
-            <div class="summary-card">
-              <span>监测断面</span>
-              <strong>{{ summary.total_devices || 0 }}</strong>
-            </div>
-            <div class="summary-card">
-              <span>在线监测</span>
-              <strong>{{ summary.online_devices || 0 }}</strong>
-            </div>
-            <div class="summary-card">
-              <span>未恢复告警</span>
-              <strong>{{ summary.alert_count || 0 }}</strong>
-            </div>
-          </div>
-        </div>
-
-        <div class="panel glass-card">
-          <div class="panel-title">AI 洞察结果</div>
-          <div class="answer-box" v-if="answer">
-            <pre>{{ answer }}</pre>
-          </div>
-          <div class="answer-placeholder" v-else>
-            <p>等待 AI 输出分析建议。</p>
-            <p class="subtle">建议先刷新数据，再选择问题模板生成分析。</p>
-          </div>
-        </div>
+          <p class="input-tip">Shift + Enter 换行</p>
+        </footer>
       </section>
-
-      <section class="data-preview glass-card">
-        <div class="panel-title">上下文数据预览</div>
-        <div class="preview-grid">
-          <div class="preview-card" v-for="item in compactSensors" :key="item.station_id">
-            <div class="preview-header">
-              <h4>{{ item.station_name || item.station_id }}</h4>
-              <span class="badge">{{ item.water_quality || '未知' }}</span>
-            </div>
-            <div class="preview-body">
-              <span>水温 {{ formatValue(item.temperature, '°C') }}</span>
-              <span>pH {{ formatValue(item.ph) }}</span>
-              <span>溶解氧 {{ formatValue(item.dissolved_oxygen, 'mg/L') }}</span>
-              <span>电导率 {{ formatValue(item.conductivity, 'μS/cm') }}</span>
-              <span>浊度 {{ formatValue(item.turbidity, 'NTU') }}</span>
-            </div>
-            <div class="preview-footer">
-              <span>{{ item.province || '未知省份' }}</span>
-              <span>{{ item.river_basin || '未知流域' }}</span>
-            </div>
-          </div>
-        </div>
-      </section>
+    </main>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
 import { getDashboardOverview, getAiInsight } from '@/api/dashboard'
 
 const overview = ref({})
 const loading = ref(false)
 const loadingOverview = ref(false)
-const question = ref('请基于当前水质数据，给出异常点位与处理建议。')
-const answer = ref('')
+const question = ref('')
+const messages = ref([])
+const chatBodyRef = ref(null)
+const inputRef = ref(null)
 
 const quickPrompts = [
-  '请基于当前水质数据，给出风险点位与增氧建议。',
-  '从水质指标看，哪些断面需要优先处理？请给出原因。',
-  '请生成今日水质运行日报，包含异常说明与建议。',
-  '请判断是否存在富营养化风险，并给出治理措施。'
+  '分析当前水质风险点与增氧建议',
+  '哪些断面需要优先处理？',
+  '生成今日水质运行日报',
+  '判断是否存在富营养化风险'
 ]
 
-const summary = computed(() => overview.value?.summary || {})
+const summaryMap = computed(() => ({
+  监测断面: overview.value?.summary?.total_devices || 0,
+  在线监测: overview.value?.summary?.online_devices || 0,
+  未恢复告警: overview.value?.summary?.alert_count || 0
+}))
+
 const overviewTimestamp = computed(() => overview.value?.timestamp || '')
-const sensors = computed(() => overview.value?.sensors || [])
-const compactSensors = computed(() =>
-  sensors.value.slice(0, 6).map(item => ({
-    station_id: item.station_id,
-    station_name: item.station_name,
-    province: item.province,
-    river_basin: item.river_basin,
-    temperature: item.temperature,
-    ph: item.ph,
-    dissolved_oxygen: item.dissolved_oxygen,
-    conductivity: item.conductivity,
-    turbidity: item.turbidity,
-    water_quality: item.water_quality,
-    timestamp: item.timestamp
-  }))
-)
+
+const scrollToBottom = async () => {
+  await nextTick()
+  if (chatBodyRef.value) {
+    chatBodyRef.value.scrollTo({
+      top: chatBodyRef.value.scrollHeight,
+      behavior: 'smooth'
+    })
+  }
+}
 
 const loadOverview = async () => {
   loadingOverview.value = true
@@ -142,6 +144,7 @@ const loadOverview = async () => {
     overview.value = res.data || {}
   } catch (error) {
     overview.value = {}
+    ElMessage.error('获取实时数据失败')
   } finally {
     loadingOverview.value = false
   }
@@ -149,42 +152,50 @@ const loadOverview = async () => {
 
 const applyPrompt = (text) => {
   question.value = text
+  askAi()
+}
+
+const clearChat = () => {
+  messages.value = []
 }
 
 const askAi = async () => {
   const trimmed = question.value.trim()
-  if (!trimmed) {
-    ElMessage.warning('请输入问题后再生成分析')
-    return
-  }
+  if (!trimmed || loading.value) return
+
+  const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  messages.value.push({ role: 'user', content: trimmed, time })
+  question.value = ''
+  await scrollToBottom()
 
   loading.value = true
-  answer.value = ''
   try {
     const context = {
-      summary: summary.value,
-      sensors: compactSensors.value,
+      summary: overview.value?.summary,
+      sensors: (overview.value?.sensors || []).slice(0, 6),
       data_source: overview.value?.data_source,
       timestamp: overview.value?.timestamp
     }
     const res = await getAiInsight(trimmed, context)
-    answer.value = res?.data?.answer || '未获取到 AI 回复'
+    messages.value.push({
+      role: 'assistant',
+      content: res?.data?.answer || '未获取到 AI 回复',
+      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    })
   } catch (error) {
-    answer.value = 'AI 分析失败，请稍后重试。'
+    const backendMessage = error?.response?.data?.message
+    messages.value.push({
+      role: 'assistant',
+      content: backendMessage ? `分析失败：${backendMessage}` : '分析失败，请稍后重试。',
+      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    })
   } finally {
     loading.value = false
+    await scrollToBottom()
   }
 }
 
-const formatValue = (value, unit = '') => {
-  if (value === null || value === undefined || value === '') return '--'
-  const formatted = Number.isFinite(Number(value)) ? Number(value).toFixed(2) : value
-  return unit ? `${formatted} ${unit}` : formatted
-}
-
-onMounted(() => {
-  loadOverview()
-})
+onMounted(loadOverview)
 </script>
 
 <style scoped lang="scss">
@@ -193,16 +204,17 @@ onMounted(() => {
   position: relative;
   padding: 32px 36px 48px;
   overflow: hidden;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 }
 
 .ai-bg {
   position: absolute;
   inset: 0;
-  background: radial-gradient(circle at 20% 20%, rgba(52, 211, 153, 0.2), transparent 45%),
-    radial-gradient(circle at 80% 10%, rgba(94, 234, 212, 0.18), transparent 40%),
-    radial-gradient(circle at 20% 80%, rgba(59, 130, 246, 0.12), transparent 45%),
+  background: radial-gradient(circle at 20% 20%, rgba(52, 211, 153, 0.18), transparent 45%),
+    radial-gradient(circle at 80% 10%, rgba(94, 234, 212, 0.16), transparent 40%),
+    radial-gradient(circle at 20% 80%, rgba(59, 130, 246, 0.1), transparent 45%),
     linear-gradient(120deg, #f7f9fc 0%, #eef5fb 45%, #f8fafc 100%);
-  z-index: 0;
+  pointer-events: none;
 }
 
 .ai-content {
@@ -210,13 +222,14 @@ onMounted(() => {
   z-index: 1;
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  gap: 18px;
 }
 
 .ai-header {
   display: flex;
-  justify-content: space-between;
   align-items: center;
+  justify-content: space-between;
+  gap: 14px;
 
   h1 {
     margin: 0;
@@ -232,225 +245,358 @@ onMounted(() => {
   }
 }
 
-.ghost-btn {
-  border: 1px solid rgba(59, 130, 246, 0.3);
-  background: rgba(59, 130, 246, 0.08);
-  color: #1d4ed8;
-  padding: 10px 18px;
-  border-radius: 12px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.ghost-btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.ghost-btn:not(:disabled):hover {
-  background: rgba(59, 130, 246, 0.14);
-}
-
-.ai-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-  gap: 20px;
-}
-
-.glass-card {
-  background: rgba(255, 255, 255, 0.75);
-  border: 1px solid rgba(255, 255, 255, 0.6);
-  box-shadow: 0 18px 45px rgba(15, 23, 42, 0.08);
-  border-radius: 18px;
-  padding: 22px;
-  backdrop-filter: blur(18px);
-}
-
-.panel-title {
-  font-size: 16px;
-  font-weight: 600;
-  color: #0f172a;
-  margin-bottom: 14px;
-}
-
-.quick-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  margin-bottom: 14px;
-}
-
-.tag-btn {
-  padding: 6px 12px;
-  border-radius: 999px;
-  border: 1px solid rgba(15, 23, 42, 0.08);
-  background: rgba(255, 255, 255, 0.7);
-  color: #334155;
-  font-size: 12px;
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.tag-btn:hover {
-  border-color: rgba(59, 130, 246, 0.4);
-  color: #1d4ed8;
-}
-
-.question-input {
-  width: 100%;
-  border: 1px solid rgba(148, 163, 184, 0.4);
-  border-radius: 14px;
-  padding: 14px 16px;
-  font-size: 14px;
-  resize: vertical;
-  background: rgba(255, 255, 255, 0.85);
-  color: #0f172a;
-}
-
-.panel-actions {
-  margin-top: 16px;
+.header-actions {
   display: flex;
   align-items: center;
-  gap: 14px;
-}
-
-.primary-btn {
-  background: linear-gradient(120deg, #2563eb, #38bdf8);
-  border: none;
-  color: white;
-  padding: 10px 18px;
-  border-radius: 12px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: transform 0.2s ease;
-}
-
-.primary-btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.primary-btn:not(:disabled):hover {
-  transform: translateY(-1px);
-}
-
-.helper-text {
-  font-size: 12px;
-  color: #64748b;
-}
-
-.context-summary {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
   gap: 12px;
-  margin-top: 18px;
 }
 
-.summary-card {
-  background: rgba(255, 255, 255, 0.8);
-  border-radius: 14px;
-  padding: 12px 14px;
+.update-tag {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.65);
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  color: #334155;
+  font-size: 12px;
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.8);
+}
+
+.dot.active {
+  background: rgba(34, 197, 94, 0.9);
+}
+
+.ai-main {
+  width: 100%;
+  max-width: 1200px;
+  margin: 0 auto;
+  height: calc(100vh - 220px);
+  min-height: 640px;
+  display: flex;
+  background: rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  border-radius: 24px;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.05);
+  z-index: 1;
+}
+
+/* 左侧面板 */
+.side-panel {
+  width: 280px;
+  border-right: 1px solid rgba(0, 0, 0, 0.05);
+  padding: 32px 24px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  color: #0f172a;
+}
 
-  span {
+.stat-card {
+  background: white;
+  padding: 16px;
+  border-radius: 16px;
+  margin-bottom: 12px;
+  border: 1px solid rgba(0, 0, 0, 0.03);
+
+  .label {
     font-size: 12px;
     color: #64748b;
+    display: block;
+    margin-bottom: 4px;
   }
 
-  strong {
-    font-size: 18px;
-  }
-}
-
-.answer-box {
-  background: rgba(15, 23, 42, 0.06);
-  border-radius: 16px;
-  padding: 16px;
-  max-height: 420px;
-  overflow: auto;
-
-  pre {
-    margin: 0;
-    font-size: 13px;
-    line-height: 1.7;
+  .value {
+    font-size: 20px;
+    font-weight: 700;
     color: #0f172a;
-    white-space: pre-wrap;
-    font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
   }
 }
 
-.answer-placeholder {
-  border: 1px dashed rgba(148, 163, 184, 0.5);
-  border-radius: 16px;
-  padding: 18px;
+.side-tip {
+  margin-top: auto;
+  font-size: 12px;
   color: #64748b;
+  line-height: 1.5;
+}
+
+.refresh-btn {
+  padding: 10px 14px;
+  border-radius: 12px;
+  border: 1px solid #e2e8f0;
+  background: rgba(255, 255, 255, 0.82);
+  cursor: pointer;
+  transition: all 0.2s;
+
+  &:hover {
+    background: #f1f5f9;
+  }
+}
+
+/* 右侧对话区 */
+.chat-section {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  background: rgba(255, 255, 255, 0.3);
+}
+
+.chat-header {
+  padding: 20px 32px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+
+  h2 {
+    font-size: 16px;
+    margin: 0;
+    color: #334155;
+  }
+
+  .clear-btn {
+    font-size: 13px;
+    color: #94a3b8;
+    border: none;
+    background: none;
+    cursor: pointer;
+  }
+}
+
+.chat-viewport {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 32px;
+
+  &::-webkit-scrollbar {
+    width: 4px;
+  }
+
+  &::-webkit-scrollbar-thumb {
+    background: #e2e8f0;
+    border-radius: 10px;
+  }
+}
+
+/* 欢迎页 */
+.welcome-view {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+
+  .ai-avatar {
+    width: 64px;
+    height: 64px;
+    background: #eff6ff;
+    color: #3b82f6;
+    border-radius: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 24px;
+    font-weight: 800;
+    margin-bottom: 24px;
+  }
+
+  h3 {
+    font-size: 24px;
+    color: #1e293b;
+    margin-bottom: 8px;
+  }
+
+  p {
+    color: #64748b;
+    margin-bottom: 32px;
+  }
+}
+
+.suggestion-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  max-width: 500px;
+}
+
+.suggest-item {
+  padding: 14px;
+  background: white;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  font-size: 13px;
+  color: #475569;
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.2s;
+
+  &:hover {
+    border-color: #3b82f6;
+    background: #eff6ff;
+    color: #2563eb;
+  }
+}
+
+/* 消息气泡 */
+.msg-wrapper {
+  display: flex;
+  margin-bottom: 24px;
+
+  &.user {
+    justify-content: flex-end;
+  }
+}
+
+.msg-bubble {
+  max-width: 80%;
+  padding: 14px 18px;
+  border-radius: 18px;
+  position: relative;
+  line-height: 1.6;
   font-size: 14px;
 }
 
-.answer-placeholder .subtle {
-  font-size: 12px;
+.msg-content {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.user .msg-bubble {
+  background: #3b82f6;
+  color: white;
+  border-bottom-right-radius: 4px;
+}
+
+.assistant .msg-bubble {
+  background: white;
+  color: #1e293b;
+  border-bottom-left-radius: 4px;
+  box-shadow: 0 2px 15px rgba(0, 0, 0, 0.03);
+}
+
+.msg-time {
+  font-size: 10px;
+  opacity: 0.6;
   margin-top: 6px;
 }
 
-.data-preview {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
+/* 输入框 */
+.input-area {
+  padding: 24px 32px 32px;
 }
 
-.preview-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: 14px;
-}
-
-.preview-card {
-  background: rgba(255, 255, 255, 0.82);
-  border: 1px solid rgba(148, 163, 184, 0.18);
+.input-wrapper {
+  background: white;
+  border: 1px solid #e2e8f0;
   border-radius: 16px;
-  padding: 14px;
+  padding: 8px 12px;
   display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
+  align-items: flex-end;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.05);
+  transition: border-color 0.2s;
 
-.preview-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+  &:focus-within {
+    border-color: #3b82f6;
+  }
 
-  h4 {
+  textarea {
+    flex: 1;
+    border: none;
+    outline: none;
+    padding: 10px;
+    resize: none;
     font-size: 14px;
-    color: #0f172a;
-    margin: 0;
+    max-height: 150px;
+
+    &::placeholder {
+      color: #94a3b8;
+    }
   }
 }
 
-.badge {
-  font-size: 11px;
-  color: #0f172a;
-  background: rgba(59, 130, 246, 0.16);
-  padding: 2px 8px;
-  border-radius: 999px;
-}
-
-.preview-body {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px 10px;
-  font-size: 12px;
-  color: #334155;
-}
-
-.preview-footer {
+.send-btn {
+  background: #3b82f6;
+  color: white;
+  border: none;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
   display: flex;
-  justify-content: space-between;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  margin-bottom: 4px;
+  transition: opacity 0.2s;
+
+  &:disabled {
+    background: #e2e8f0;
+    cursor: not-allowed;
+  }
+
+  svg {
+    width: 18px;
+    height: 18px;
+  }
+}
+
+.input-tip {
   font-size: 11px;
-  color: #64748b;
+  color: #94a3b8;
+  margin: 8px 0 0 12px;
+}
+
+/* 动画效果 */
+.typing-dots {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+
+  span {
+    width: 6px;
+    height: 6px;
+    background: #cbd5e1;
+    border-radius: 50%;
+    animation: blink 1.4s infinite both;
+
+    &:nth-child(2) {
+      animation-delay: 0.2s;
+    }
+
+    &:nth-child(3) {
+      animation-delay: 0.4s;
+    }
+  }
+}
+
+@keyframes blink {
+  0%,
+  80%,
+  100% {
+    opacity: 0.2;
+  }
+
+  40% {
+    opacity: 1;
+  }
+}
+
+@media (max-width: 900px) {
+  .ai-main {
+    width: 96%;
+    height: calc(100vh - 220px);
+  }
+
+  .side-panel {
+    width: 240px;
+    padding: 24px 18px;
+  }
 }
 
 @media (max-width: 768px) {
@@ -461,7 +607,43 @@ onMounted(() => {
   .ai-header {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .ai-main {
+    width: 100%;
+    height: calc(100vh - 220px);
+    flex-direction: column;
+  }
+
+  .side-panel {
+    width: 100%;
+    border-right: none;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+    flex-direction: row;
+    align-items: center;
     gap: 12px;
+  }
+
+  .stat-group {
+    display: flex;
+    gap: 10px;
+    overflow: auto;
+  }
+
+  .stat-card {
+    min-width: 120px;
+    margin-bottom: 0;
+  }
+
+  .refresh-btn {
+    margin-left: auto;
+  }
+
+  .chat-header,
+  .chat-viewport,
+  .input-area {
+    padding-left: 16px;
+    padding-right: 16px;
   }
 }
 </style>

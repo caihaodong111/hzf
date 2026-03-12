@@ -13,7 +13,7 @@ from datetime import timedelta
 from django.db.models import Q
 from django.db.models.functions import Coalesce
 
-from .models import SensorData, SensorSnapshot, Alert
+from .models import SensorData, SensorSnapshot, StationLocation, Alert
 from .serializers import (
     SensorDataSerializer, RealtimeDataSerializer,
     HistoricalDataSerializer, AlertSerializer, DashboardSummarySerializer
@@ -166,6 +166,7 @@ class SensorDataViewSet(viewsets.ReadOnlyModelViewSet):
 
         sensors = []
         latest_time = None
+        missing_coord_station_ids = set()
         snapshot_queryset = base_queryset.exclude(station_id__isnull=True).order_by('-recorded_at')
         for record in snapshot_queryset:
             if not latest_time or record.recorded_at > latest_time:
@@ -194,6 +195,10 @@ class SensorDataViewSet(viewsets.ReadOnlyModelViewSet):
                 'latitude': float(record.latitude) if record.latitude else None,
                 'recorded_at': record.recorded_at,
             }, 'database')
+            if transformed.get("longitude") is None or transformed.get("latitude") is None:
+                station_id = transformed.get("station_id")
+                if station_id:
+                    missing_coord_station_ids.add(station_id)
             if not transformed.get("city"):
                 transformed["city"] = infer_city_name(
                     (transformed.get("station_name"), transformed.get("location")),
@@ -203,6 +208,25 @@ class SensorDataViewSet(viewsets.ReadOnlyModelViewSet):
             transformed["data_source"] = record.data_source or ("manual" if manual_mode else "auto")
             transformed["_recorded_at"] = record.recorded_at
             sensors.append(transformed)
+
+        if missing_coord_station_ids:
+            cached_coords = {
+                row.station_id: (float(row.longitude), float(row.latitude))
+                for row in (
+                    StationLocation.objects.filter(station_id__in=list(missing_coord_station_ids))
+                    .exclude(longitude__isnull=True)
+                    .exclude(latitude__isnull=True)
+                )
+                if row.station_id
+            }
+            if cached_coords:
+                for sensor in sensors:
+                    if sensor.get("longitude") is not None and sensor.get("latitude") is not None:
+                        continue
+                    station_id = sensor.get("station_id")
+                    coords = cached_coords.get(station_id)
+                    if coords:
+                        sensor["longitude"], sensor["latitude"] = coords
 
         if city_name:
             sensors = [

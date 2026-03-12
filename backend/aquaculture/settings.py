@@ -218,3 +218,13 @@ HUAWEI_WATER_DATA = {
     "default_params": json.loads(os.environ.get("HUAWEI_WATER_DATA_DEFAULT_PARAMS", '{"version":"v1"}')),
     "stanames": json.loads(os.environ.get("HUAWEI_WATER_DATA_STANAMES", '[]')) if os.environ.get("HUAWEI_WATER_DATA_STANAMES") else [],
 }
+
+# AMap (高德地图) - 地理编码与前端地图
+# 后端 Web 服务 Key（用于 restapi.amap.com 的地理编码/逆地理编码等）
+AMAP_WEB_SERVICE_KEY = os.environ.get("AMAP_WEB_SERVICE_KEY", "")
+# 兼容旧变量名：AMAP_API_KEY（同样用于后端 Web 服务 Key）
+AMAP_API_KEY = os.environ.get("AMAP_API_KEY", "")
+AMAP_GEOCODE_ENABLED = os.environ.get("AMAP_GEOCODE_ENABLED", "true").lower() == "true"
+# with_city=True 数据量大，默认关闭；如需在按城市抓取时也进行地理编码可开启
+AMAP_GEOCODE_ENABLED_WITH_CITY = os.environ.get("AMAP_GEOCODE_ENABLED_WITH_CITY", "false").lower() == "true"
+AMAP_GEOCODE_MAX_SECTIONS = int(os.environ.get("AMAP_GEOCODE_MAX_SECTIONS", "300"))

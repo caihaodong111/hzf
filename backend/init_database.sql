@@ -18,6 +18,23 @@ CREATE TABLE IF NOT EXISTS sensor_data (
     INDEX idx_recorded_at (recorded_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='传感器数据表';
 
+-- 站点坐标缓存表（用于地图标点与高德地理编码结果复用）
+-- 注意：该表由 Django 迁移 sensors/0011_station_locations.py 引入；这里补充到 SQL 初始化脚本中，避免仅用 SQL 初始化时缺表。
+CREATE TABLE IF NOT EXISTS station_locations (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    station_id VARCHAR(50) NULL UNIQUE COMMENT '站点ID（优先用于匹配；允许为空）',
+    station_name VARCHAR(100) NULL COMMENT '站点名称/断面名称',
+    province VARCHAR(50) NULL COMMENT '省份',
+    city VARCHAR(50) NULL COMMENT '城市',
+    longitude DECIMAL(10,7) NULL COMMENT '经度（东经为正，西经为负）',
+    latitude DECIMAL(10,7) NULL COMMENT '纬度（北纬为正，南纬为负）',
+    source VARCHAR(20) NULL COMMENT '坐标来源: amap/manual/import/other',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    INDEX station_loc_name_area_idx (station_name, province, city),
+    INDEX station_loc_area_idx (province, city)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='站点坐标缓存表';
+
 -- 告警记录表
 CREATE TABLE IF NOT EXISTS alerts (
     id INT AUTO_INCREMENT PRIMARY KEY,

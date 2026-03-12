@@ -19,6 +19,11 @@
 - 索引：`station_id`、`recorded_at`、`province`、`city`、`river_basin`。
 - 写入方式：`sync_realtime_data` 管理命令或 `POST /api/v1/sensors/data/sync_realtime/` 手动触发。
 
+### station_locations
+- 站点/断面经纬度缓存表：避免同一 `station_name` 反复调用高德地理编码，并支撑前端地图标点。
+- 关键字段：`station_id`（优先匹配，允许为空）、`station_name`、`province`、`city`、`longitude`、`latitude`、`source`、`updated_at`。
+- 写入方式：`sync_realtime_data` 入库时自动补齐（命中缓存优先，缺失时调用高德并回写）；也可通过 `python manage.py geocode_station_locations` 批量补齐。
+
 ### dashboard_datasourcepreference
 - 数据源偏好设置（自动/手动）。
 - 关键字段：`mode`、`updated_at`。

@@ -3,12 +3,13 @@
 """
 import json
 import os
+import logging
 import urllib.request
 import urllib.error
 
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
-from django.db.models import Avg, Max
+from django.db.models import Avg, Count, Max, Q
 from django.utils import timezone
 from datetime import timedelta
 
@@ -22,6 +23,14 @@ from core.data_source_preference import (
     get_data_source_priority,
     set_data_source_mode,
 )
+
+logger = logging.getLogger(__name__)
+
+POOR_WATER_QUALITIES = [
+    'Ⅲ', 'Ⅳ', 'Ⅴ', '劣Ⅴ',
+    'Ⅲ类', 'Ⅳ类', 'Ⅴ类', '劣Ⅴ类',
+    '劣V', '劣V类',
+]
 
 
 @api_view(['GET'])
@@ -40,7 +49,7 @@ def overview(request):
     if allowed_sources:
         snapshot_qs = snapshot_qs.filter(data_source__in=allowed_sources)
     latest_time = snapshot_qs.aggregate(max_time=Max('recorded_at')).get('max_time')
-    sensors = []
+    preview_sensors = []
     for record in snapshot_qs.order_by('-recorded_at')[:count]:
         transformed = DataTransformer.transform_realtime_data({
             'station_id': record.station_id,
@@ -49,6 +58,8 @@ def overview(request):
             'province': record.province,
             'city': record.city,
             'river_basin': record.river_basin,
+            'longitude': float(record.longitude) if record.longitude is not None else None,
+            'latitude': float(record.latitude) if record.latitude is not None else None,
             'water_quality': record.water_quality,
             'temperature': record.temperature,
             'ph': record.ph,
@@ -65,12 +76,12 @@ def overview(request):
             'recorded_at': record.recorded_at,
         }, 'database')
         transformed['data_source'] = record.data_source or ('manual' if manual_mode else 'auto')
-        sensors.append(transformed)
+        preview_sensors.append(transformed)
     realtime_data = {
-        'sensors': sensors,
+        'sensors': preview_sensors,
         'timestamp': (latest_time or timezone.now()).isoformat()
     }
-    source = 'manual' if manual_mode else ('auto' if sensors else 'none')
+    source = 'manual' if manual_mode else ('auto' if preview_sensors else 'none')
 
     # 无可用数据源时返回空结果
     if not realtime_data:
@@ -103,21 +114,22 @@ def overview(request):
         avg_algae_density=Avg('algae_density'),
     )
 
-    # 设备统计 - 优先使用实时数据
-    total_devices = len(sensors)
-    online_devices = sum(1 for s in sensors if _is_device_online(s))
+    # 设备统计：来自 sensor_data_latest（SensorSnapshot），不依赖 count / hours
+    total_devices = snapshot_qs.values('station_id').distinct().count()
+    online_threshold = timezone.now() - timedelta(hours=1)
+    online_devices = snapshot_qs.filter(recorded_at__gte=online_threshold).values('station_id').distinct().count()
     offline_devices = max(total_devices - online_devices, 0)
 
     if total_devices == 0:
         total_devices, online_devices, offline_devices = _get_device_counts_from_history(
             hours,
-            manual_mode=manual_mode
+            manual_mode=manual_mode,
+            allowed_sources=allowed_sources,
         )
 
-    # 告警数量（用于“水质综合分析”）：来自 sensor_data_latest 中 water_quality >= Ⅲ 的数量
+    # 告警数量（用于“AI 智能分析”卡片）：来自 sensor_data_latest 中水质较差的断面数量
     # 说明：这里按最新快照统计，不受 hours 参数影响
-    poor_qualities = ['Ⅲ', 'Ⅳ', 'Ⅴ', '劣Ⅴ', 'Ⅲ类', 'Ⅳ类', 'Ⅴ类', '劣Ⅴ类', '劣V', '劣V类']
-    alert_count = snapshot_qs.filter(water_quality__in=poor_qualities).count()
+    alert_count = snapshot_qs.filter(water_quality__in=POOR_WATER_QUALITIES).count()
 
     # 格式化告警数据
     alerts = []
@@ -136,12 +148,13 @@ def overview(request):
         else:
             alerts = []
 
-    # 计算水质分布
-    water_quality_dist = {}
-    for s in sensors:
-        wq = s.get('water_quality')
-        if wq:
-            water_quality_dist[wq] = water_quality_dist.get(wq, 0) + 1
+    # 计算水质分布：来自 sensor_data_latest（SensorSnapshot），不依赖 count / hours
+    water_quality_dist = {
+        row['water_quality']: row['count']
+        for row in snapshot_qs.exclude(water_quality__isnull=True)
+        .values('water_quality')
+        .annotate(count=Count('id'))
+    }
 
     return Response({
         'code': 200,
@@ -196,11 +209,13 @@ def statistics(request):
     hours = int(request.query_params.get('hours', 24))
     time_threshold = timezone.now() - timedelta(hours=hours)
     manual_mode = get_data_source_mode() == 'manual'
+    allowed_sources = get_allowed_sources()
 
     # 设备统计
     total_devices, online_devices, offline_devices = _get_device_counts_from_history(
         hours,
-        manual_mode=manual_mode
+        manual_mode=manual_mode,
+        allowed_sources=allowed_sources,
     )
     error_devices = 0
 
@@ -300,11 +315,14 @@ def ai_insight(request):
             status=400
         )
 
-    context = payload.get('context') or {}
+    client_context = payload.get('context') or {}
     model = payload.get('model') or 'glm-4.7-flash'
     try:
-        answer = _call_bigmodel(api_key, model, question, context)
+        snapshot_context = _build_snapshot_ai_context()
+        merged_context = {**client_context, **snapshot_context}
+        answer = _call_bigmodel(api_key, model, question, merged_context)
     except RuntimeError as exc:
+        logger.exception("AI insight failed (model=%s)", model)
         return Response({'code': 502, 'message': str(exc)}, status=502)
 
     return Response({
@@ -321,6 +339,7 @@ def _call_bigmodel(api_key, model, question, context):
     system_prompt = (
         "你是智慧渔业水质监控系统的AI助手，负责基于监测数据提供"
         "风险识别、异常解释、运维建议与可执行行动。"
+        "上下文数据均来源于数据库表 sensor_data_latest（最新快照）。"
         "回答需简洁、可落地，分点给出结论与建议。"
     )
     payload = {
@@ -329,6 +348,8 @@ def _call_bigmodel(api_key, model, question, context):
             'sensors': context.get('sensors'),
             'data_source': context.get('data_source'),
             'timestamp': context.get('timestamp'),
+            'source_table': context.get('source_table'),
+            'water_quality_distribution': context.get('water_quality_distribution'),
         },
         'question': question
     }
@@ -363,7 +384,7 @@ def _call_bigmodel(api_key, model, question, context):
             data = json.loads(raw.decode('utf-8'))
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode('utf-8') if exc.fp else str(exc)
-        raise RuntimeError(f'AI服务响应异常: {detail}') from exc
+        raise RuntimeError(f'AI服务响应异常(HTTP {exc.code}): {detail}') from exc
     except urllib.error.URLError as exc:
         raise RuntimeError(f'AI服务连接失败: {exc.reason}') from exc
 
@@ -397,9 +418,11 @@ def data_source_settings(request):
     })
 
 
-def _get_device_counts_from_history(hours, manual_mode=False):
+def _get_device_counts_from_history(hours, manual_mode=False, allowed_sources=None):
     time_threshold = timezone.now() - timedelta(hours=hours)
     data_qs = SensorData.objects.filter(recorded_at__gte=time_threshold)
+    if allowed_sources is None:
+        allowed_sources = get_allowed_sources()
     if allowed_sources:
         data_qs = data_qs.filter(data_source__in=allowed_sources)
     if not data_qs.exists():
@@ -409,3 +432,122 @@ def _get_device_counts_from_history(hours, manual_mode=False):
     online = data_qs.filter(recorded_at__gte=online_threshold).values('station_id').distinct().count()
     offline = max(total - online, 0)
     return total, online, offline
+
+
+def _build_snapshot_ai_context():
+    """构建 AI 上下文：强制以 sensor_data_latest（SensorSnapshot）为准。"""
+    snapshot_qs = SensorSnapshot.objects.exclude(station_id__isnull=True)
+    allowed_sources = get_allowed_sources()
+    if allowed_sources:
+        snapshot_qs = snapshot_qs.filter(data_source__in=allowed_sources)
+
+    latest_time = snapshot_qs.aggregate(max_time=Max('recorded_at')).get('max_time')
+    now = timezone.now()
+    online_threshold = now - timedelta(hours=1)
+
+    total_devices = snapshot_qs.values('station_id').distinct().count()
+    online_devices = snapshot_qs.filter(recorded_at__gte=online_threshold).values('station_id').distinct().count()
+    offline_devices = max(total_devices - online_devices, 0)
+
+    avg_agg = snapshot_qs.aggregate(
+        avg_temperature=Avg('temperature'),
+        avg_ph=Avg('ph'),
+        avg_dissolved_oxygen=Avg('dissolved_oxygen'),
+        avg_conductivity=Avg('conductivity'),
+        avg_turbidity=Avg('turbidity'),
+    )
+
+    def _to_float(value, digits=2):
+        if value is None:
+            return None
+        try:
+            return round(float(value), digits)
+        except (TypeError, ValueError):
+            return None
+
+    alert_count = snapshot_qs.filter(water_quality__in=POOR_WATER_QUALITIES).count()
+    water_quality_dist = {
+        row['water_quality']: row['count']
+        for row in snapshot_qs.exclude(water_quality__isnull=True)
+        .values('water_quality')
+        .annotate(count=Count('id'))
+    }
+
+    risk_qs = snapshot_qs.filter(
+        Q(water_quality__in=POOR_WATER_QUALITIES)
+        | Q(dissolved_oxygen__lt=5)
+        | Q(ph__lt=6.5)
+        | Q(ph__gt=8.5)
+    ).order_by('-recorded_at')[:200]
+
+    rows = list(risk_qs.values(
+        'station_id',
+        'station_name',
+        'province',
+        'city',
+        'river_basin',
+        'water_quality',
+        'temperature',
+        'ph',
+        'dissolved_oxygen',
+        'conductivity',
+        'turbidity',
+        'recorded_at',
+    ))
+
+    def _risk_score(row):
+        score = 0
+        do = row.get('dissolved_oxygen')
+        ph = row.get('ph')
+        wq = row.get('water_quality')
+        try:
+            if do is not None and float(do) < 5:
+                score += 3
+        except (TypeError, ValueError):
+            pass
+        try:
+            if ph is not None:
+                phf = float(ph)
+                if phf < 6.5 or phf > 8.5:
+                    score += 2
+        except (TypeError, ValueError):
+            pass
+        if wq in ['Ⅴ', '劣Ⅴ', 'Ⅴ类', '劣Ⅴ类', '劣V', '劣V类']:
+            score += 4
+        elif wq in ['Ⅳ', 'Ⅳ类']:
+            score += 3
+        elif wq in ['Ⅲ', 'Ⅲ类']:
+            score += 2
+        return score
+
+    for row in rows:
+        row['risk_score'] = _risk_score(row)
+        recorded_at = row.get('recorded_at')
+        row['timestamp'] = recorded_at.isoformat() if recorded_at else None
+        row['temperature'] = _to_float(row.get('temperature'), 2)
+        row['ph'] = _to_float(row.get('ph'), 2)
+        row['dissolved_oxygen'] = _to_float(row.get('dissolved_oxygen'), 2)
+        row['conductivity'] = _to_float(row.get('conductivity'), 2)
+        row['turbidity'] = _to_float(row.get('turbidity'), 2)
+        row.pop('recorded_at', None)
+
+    rows.sort(key=lambda r: (r.get('risk_score', 0), r.get('timestamp') or ''), reverse=True)
+
+    return {
+        'source_table': 'sensor_data_latest',
+        'timestamp': (latest_time or now).isoformat(),
+        'data_source': 'database',
+        'summary': {
+            'total_devices': total_devices,
+            'online_devices': online_devices,
+            'offline_devices': offline_devices,
+            'alert_count': alert_count,
+            'avg_temperature': _to_float(avg_agg.get('avg_temperature'), 2),
+            'avg_ph': _to_float(avg_agg.get('avg_ph'), 2),
+            'avg_dissolved_oxygen': _to_float(avg_agg.get('avg_dissolved_oxygen'), 2),
+            'avg_conductivity': _to_float(avg_agg.get('avg_conductivity'), 2),
+            'avg_turbidity': _to_float(avg_agg.get('avg_turbidity'), 2),
+        },
+        'water_quality_distribution': water_quality_dist,
+        'sensors': rows[:20],
+    }

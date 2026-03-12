@@ -14,7 +14,7 @@ from django.utils.dateparse import parse_datetime
 
 logger = logging.getLogger(__name__)
 
-from apps.sensors.models import SensorData, SensorSnapshot
+from apps.sensors.models import SensorData, SensorSnapshot, StationLocation
 from core.data_source_preference import get_data_source_priority
 from core.data_transformer import DataTransformer
 from core.national_water_data import NationalWaterDataService
@@ -244,7 +244,96 @@ def sync_realtime_data(
             for row in existing_qs.values(*signature_fields):
                 existing_signatures.add(_build_signature(row, signature_fields))
 
+    def _normalize_text(value: Any) -> str:
+        return str(value or "").strip()
+
+    def _coords_from_location(row: StationLocation) -> Optional[Tuple[float, float]]:
+        if row.longitude is None or row.latitude is None:
+            return None
+        try:
+            return (float(row.longitude), float(row.latitude))
+        except (TypeError, ValueError):
+            return None
+
+    def _match_location_by_name(
+        candidates: List[StationLocation],
+        province: str,
+        city: str,
+    ) -> Optional[Tuple[float, float]]:
+        """同名站点可能多个：优先 city 精确匹配，再 province 匹配，最后任意一个有坐标的。"""
+        province_norm = _normalize_text(province)
+        city_norm = _normalize_text(city)
+
+        def pick(rows: List[StationLocation]) -> Optional[Tuple[float, float]]:
+            for row in rows:
+                coords = _coords_from_location(row)
+                if coords:
+                    return coords
+            return None
+
+        if city_norm:
+            coords = pick([r for r in candidates if _normalize_text(r.city) == city_norm])
+            if coords:
+                return coords
+        if province_norm:
+            coords = pick([r for r in candidates if _normalize_text(r.province) == province_norm])
+            if coords:
+                return coords
+        return pick(candidates)
+
     section_coords: Dict[str, Tuple[float, float]] = {}
+    # 1) 先从坐标缓存表匹配，尽量减少外部地理编码次数
+    station_ids_for_lookup = [
+        s.get("station_id") for s in transformed_sensors if s.get("station_id")
+    ]
+    station_names_for_lookup = [
+        _normalize_text(s.get("station_name")) for s in transformed_sensors if _normalize_text(s.get("station_name"))
+    ]
+    cached_by_station_id: Dict[str, Tuple[float, float]] = {}
+    cached_by_name: Dict[str, List[StationLocation]] = {}
+
+    if station_ids_for_lookup:
+        for row in (
+            StationLocation.objects.filter(station_id__in=station_ids_for_lookup)
+            .exclude(longitude__isnull=True)
+            .exclude(latitude__isnull=True)
+        ):
+            coords = _coords_from_location(row)
+            if coords and row.station_id:
+                cached_by_station_id[row.station_id] = coords
+
+    if station_names_for_lookup:
+        for row in (
+            StationLocation.objects.filter(station_name__in=station_names_for_lookup)
+            .exclude(longitude__isnull=True)
+            .exclude(latitude__isnull=True)
+        ):
+            name = _normalize_text(row.station_name)
+            if not name:
+                continue
+            cached_by_name.setdefault(name, []).append(row)
+
+    missing_for_geocode: List[Dict[str, Any]] = []
+    for sensor in transformed_sensors:
+        station_id = sensor.get("station_id")
+        station_name = _normalize_text(sensor.get("station_name"))
+        if not station_id:
+            continue
+
+        coords = cached_by_station_id.get(station_id)
+        if not coords and station_name:
+            candidates = cached_by_name.get(station_name) or []
+            if candidates:
+                coords = _match_location_by_name(
+                    candidates,
+                    sensor.get("province") or "",
+                    sensor.get("city") or "",
+                )
+        if coords:
+            section_coords[station_id] = coords
+        else:
+            missing_for_geocode.append(sensor)
+
     # with_city 场景数据量很大，默认不做高德地理编码（否则会非常慢）；需要时可在 settings 中开启。
     if with_city and not bool(getattr(settings, "AMAP_GEOCODE_ENABLED_WITH_CITY", False)):
         logger.info("with_city=True: 跳过高德地理编码（可通过 AMAP_GEOCODE_ENABLED_WITH_CITY 开启）")
@@ -255,13 +344,33 @@ def sync_realtime_data(
             candidates = [
                 {
                     "key": s.get("station_id"),
-                    "name": s.get("station_name"),
+                    "name": s.get("station_name") or s.get("location"),
+                    "query": _normalize_text(s.get("location")) or _normalize_text(s.get("station_name")),
+                    "location": s.get("location"),
                     "province": s.get("province"),
                     "city": s.get("city"),
+                    "river_basin": s.get("river_basin"),
                 }
-                for s in transformed_sensors
-                if s.get("station_id") and s.get("station_name")
+                for s in missing_for_geocode
+                if s.get("station_id") and (s.get("station_name") or s.get("location"))
             ]
+            # 对短站点名追加上下文，降低命中“政府/行政中心点”的概率
+            for item in candidates:
+                raw_query = _normalize_text(item.get("query"))
+                if not raw_query:
+                    continue
+                if len(raw_query) <= 4 and all(token not in raw_query for token in ("桥", "闸", "坝", "水库", "河", "湖", "港", "渠")):
+                    ctx = " ".join(
+                        part
+                        for part in (
+                            _normalize_text(item.get("city")),
+                            _normalize_text(item.get("province")),
+                            _normalize_text(item.get("river_basin")),
+                        )
+                        if part
+                    ).strip()
+                    if ctx:
+                        item["query"] = f"{raw_query} {ctx}"
             if max_sections > 0:
                 candidates = candidates[:max_sections]
             logger.info(
@@ -270,12 +379,57 @@ def sync_realtime_data(
                 len(transformed_sensors),
             )
             amap_service = get_amap_service()
-            section_coords = amap_service.batch_geocode_sections(
+            geocoded_coords = amap_service.batch_geocode_sections(
                 candidates,
                 province=None,
                 city=None,
             )
-            logger.info("成功获取断面经纬度坐标: %s/%s", len(section_coords), len(candidates))
+            if geocoded_coords:
+                section_coords.update(geocoded_coords)
+                # 将新获取的坐标写回缓存表（优先用 station_id 作为 key）
+                to_create: List[StationLocation] = []
+                to_update: List[StationLocation] = []
+                existing_map: Dict[str, StationLocation] = {
+                    row.station_id: row
+                    for row in StationLocation.objects.filter(
+                        station_id__in=list(geocoded_coords.keys())
+                    )
+                    if row.station_id
+                }
+                meta_by_id = {
+                    _normalize_text(item.get("key")): item
+                    for item in candidates
+                    if _normalize_text(item.get("key"))
+                }
+                for station_id, (lon, lat) in geocoded_coords.items():
+                    meta = meta_by_id.get(_normalize_text(station_id)) or {}
+                    row = existing_map.get(station_id)
+                    payload = {
+                        "station_id": station_id,
+                        "station_name": meta.get("name") or "",
+                        "province": meta.get("province") or "",
+                        "city": meta.get("city") or "",
+                        "longitude": lon,
+                        "latitude": lat,
+                        "source": "amap",
+                    }
+                    if row:
+                        # 仅在缺失时补齐，避免覆盖人工校准坐标
+                        if row.longitude is None or row.latitude is None:
+                            for k, v in payload.items():
+                                setattr(row, k, v)
+                            to_update.append(row)
+                    else:
+                        to_create.append(StationLocation(**payload))
+                if to_create:
+                    StationLocation.objects.bulk_create(to_create, batch_size=200)
+                if to_update:
+                    StationLocation.objects.bulk_update(
+                        to_update,
+                        ["station_name", "province", "city", "longitude", "latitude", "source"],
+                        batch_size=200,
+                    )
+            logger.info("成功获取断面经纬度坐标: %s/%s", len(geocoded_coords), len(candidates))
         else:
             logger.info("高德地理编码已禁用（AMAP_GEOCODE_ENABLED=False）")
 

@@ -22,10 +22,6 @@
     <div class="map-layout">
       <section class="map-panel glass-card">
         <div class="panel-header">
-          <div class="panel-title">
-            <h3>水域分布示意</h3>
-            <span class="subtitle">共 {{ displaySensors.length }} 个断面</span>
-          </div>
           <div class="panel-actions">
             <el-input
               v-model="search"
@@ -68,86 +64,68 @@
           <div v-if="!loading && !displaySensors.length" class="map-empty">暂无可展示的断面数据</div>
         </div>
       </section>
-
-      <aside class="detail-panel">
-        <div class="glass-card detail-card">
-          <div class="detail-header">
-            <div>
-              <h3>{{ selectedSensor?.station_name || selectedSensor?.station_id || '未选择断面' }}</h3>
-              <p>
-                {{ selectedSensor?.province || '-' }} · {{ selectedSensor?.river_basin || '未知流域' }}
-              </p>
-            </div>
-            <span class="quality-chip" :style="{ background: qualityColors[selectedSensor?.water_quality] || '#94a3b8' }">
-              {{ selectedSensor?.water_quality ? `水质 ${selectedSensor.water_quality}` : '无水质' }}
-            </span>
-          </div>
-
-          <div class="metric-grid">
-            <div class="metric-item">
-              <span>水温</span>
-              <strong>{{ formatValue(selectedSensor?.temperature, '°C') }}</strong>
-            </div>
-            <div class="metric-item">
-              <span>pH</span>
-              <strong>{{ formatValue(selectedSensor?.ph) }}</strong>
-            </div>
-            <div class="metric-item">
-              <span>溶解氧</span>
-              <strong>{{ formatValue(selectedSensor?.dissolved_oxygen, 'mg/L') }}</strong>
-            </div>
-            <div class="metric-item">
-              <span>电导率</span>
-              <strong>{{ formatValue(selectedSensor?.conductivity, 'μS/cm') }}</strong>
-            </div>
-            <div class="metric-item">
-              <span>浊度</span>
-              <strong>{{ formatValue(selectedSensor?.turbidity, 'NTU') }}</strong>
-            </div>
-            <div class="metric-item">
-              <span>数据时间</span>
-              <strong>{{ formatTime(selectedSensor?.timestamp) }}</strong>
-            </div>
-          </div>
-
-          <div class="trend-card">
-            <div class="trend-header">
-              <span>近 24h 趋势</span>
-              <button class="ghost-btn" type="button" @click="loadHistory" :disabled="historyLoading">
-                {{ historyLoading ? '加载中...' : '刷新趋势' }}
-              </button>
-            </div>
-            <div ref="historyChartRef" class="trend-chart"></div>
-            <p v-if="!historySeries.length && !historyLoading" class="trend-empty">暂无历史趋势数据</p>
-          </div>
-        </div>
-
-        <div class="glass-card list-card">
-          <div class="list-header">
-            <h4>断面快速选择</h4>
-            <span>共 {{ displaySensors.length }} 个</span>
-          </div>
-          <div class="list-body">
-            <button
-              v-for="sensor in displaySensors.slice(0, 8)"
-              :key="sensor.station_id"
-              class="list-item"
-              :class="{ active: sensor.station_id === selectedId }"
-              type="button"
-              @click="selectSensor(sensor)"
-            >
-              <div>
-                <span class="name">{{ sensor.station_name || sensor.station_id }}</span>
-                <span class="meta">{{ sensor.city || sensor.province || '-' }}</span>
-              </div>
-              <span class="mini-quality" :style="{ background: qualityColors[sensor.water_quality] || '#94a3b8' }">
-                {{ sensor.water_quality || '-' }}
-              </span>
-            </button>
-          </div>
-        </div>
-      </aside>
     </div>
+
+    <el-dialog
+      v-model="sensorDialogVisible"
+      width="860px"
+      top="10vh"
+      class="sensor-dialog"
+      :destroy-on-close="true"
+      :close-on-click-modal="true"
+      @opened="handleDialogOpened"
+      @closed="handleDialogClosed"
+    >
+      <template #header>
+        <div class="dialog-title">
+          <div>
+            <h3>{{ selectedSensor?.station_name || selectedSensor?.station_id || '断面详情' }}</h3>
+            <p>{{ selectedSensor?.province || '-' }} · {{ selectedSensor?.river_basin || '未知流域' }}</p>
+          </div>
+          <span class="quality-chip" :style="{ background: qualityColors[selectedSensor?.water_quality] || '#94a3b8' }">
+            {{ selectedSensor?.water_quality ? `水质 ${selectedSensor.water_quality}` : '无水质' }}
+          </span>
+        </div>
+      </template>
+
+      <div class="metric-grid">
+        <div class="metric-item">
+          <span>水温</span>
+          <strong>{{ formatValue(selectedSensor?.temperature, '°C') }}</strong>
+        </div>
+        <div class="metric-item">
+          <span>pH</span>
+          <strong>{{ formatValue(selectedSensor?.ph) }}</strong>
+        </div>
+        <div class="metric-item">
+          <span>溶解氧</span>
+          <strong>{{ formatValue(selectedSensor?.dissolved_oxygen, 'mg/L') }}</strong>
+        </div>
+        <div class="metric-item">
+          <span>电导率</span>
+          <strong>{{ formatValue(selectedSensor?.conductivity, 'μS/cm') }}</strong>
+        </div>
+        <div class="metric-item">
+          <span>浊度</span>
+          <strong>{{ formatValue(selectedSensor?.turbidity, 'NTU') }}</strong>
+        </div>
+        <div class="metric-item">
+          <span>数据时间</span>
+          <strong>{{ formatTime(selectedSensor?.timestamp) }}</strong>
+        </div>
+      </div>
+
+      <div class="trend-card">
+        <div class="trend-header">
+          <span>近 24h 趋势</span>
+          <button class="ghost-btn" type="button" @click="loadHistory" :disabled="historyLoading || !selectedId">
+            {{ historyLoading ? '加载中...' : '刷新趋势' }}
+          </button>
+        </div>
+        <div ref="historyChartRef" class="trend-chart"></div>
+        <p v-if="!historySeries.length && !historyLoading" class="trend-empty">暂无历史趋势数据</p>
+      </div>
+    </el-dialog>
   </div>
 </template>
 
@@ -163,6 +141,7 @@ const search = ref('')
 const qualityFilter = ref('')
 const selectedId = ref('')
 const lastUpdate = ref('')
+const sensorDialogVisible = ref(false)
 
 const historyChartRef = ref(null)
 const historySeries = ref([])
@@ -356,9 +335,9 @@ const mapPoints = computed(() => {
   })
 })
 
-// 高德地图配置
-const AMAP_API_KEY = 'e93b08da3b963ae04df6a953c0ac1cb8'
-const AMAP_SECURITY_CODE = '2abf6122738babe27cee3c5c9ae693ea'
+// 高德地图配置（来自 Vite 环境变量）
+const AMAP_API_KEY = import.meta.env.VITE_AMAP_JS_API_KEY || import.meta.env.VITE_AMAP_API_KEY || ''
+const AMAP_SECURITY_CODE = import.meta.env.VITE_AMAP_SECURITY_CODE || ''
 
 // 计算地图配置
 const mapConfig = computed(() => {
@@ -480,14 +459,14 @@ const applySearch = () => {
 const loadRealtime = async () => {
   loading.value = true
   try {
-    const res = await getRealtimeData(200)
+    // 地图页需要尽量展示全量断面（否则会看起来“很多地方没标点”）
+    const res = await getRealtimeData(5000)
     const data = res?.data?.sensors || []
     sensors.value = data
     lastUpdate.value = res?.data?.timestamp || ''
     if (!selectedId.value && data.length) {
       selectedId.value = data[0].station_id
     }
-    await loadHistory()
   } catch (error) {
     sensors.value = []
   } finally {
@@ -498,6 +477,10 @@ const loadRealtime = async () => {
 const selectSensor = (sensor) => {
   if (!sensor.station_id) return
   selectedId.value = sensor.station_id
+  if (!sensorDialogVisible.value) {
+    sensorDialogVisible.value = true
+    return
+  }
 
   // 输出调试信息
   console.log('=== 选中的断面 ===')
@@ -529,8 +512,11 @@ const formatTime = (value) => {
 const initChart = async () => {
   await nextTick()
   if (!historyChartRef.value) return
+  historyChart?.dispose()
   historyChart = echarts.init(historyChartRef.value)
+  window.removeEventListener('resize', resizeChart)
   window.addEventListener('resize', resizeChart)
+  updateChart()
 }
 
 const resizeChart = () => {
@@ -594,9 +580,19 @@ const updateChart = () => {
   })
 }
 
-onMounted(async () => {
+const handleDialogOpened = async () => {
   await initChart()
+  await loadHistory()
+}
 
+const handleDialogClosed = () => {
+  window.removeEventListener('resize', resizeChart)
+  historyChart?.dispose()
+  historyChart = null
+  historySeries.value = []
+}
+
+onMounted(async () => {
   // 设置高德地图安全密钥
   window._AMapSecurityConfig = {
     securityJsCode: AMAP_SECURITY_CODE || '',
@@ -628,7 +624,6 @@ watch(displaySensors, (next) => {
   const exists = next.some(sensor => sensor.station_id === selectedId.value)
   if (!exists) {
     selectedId.value = next[0].station_id || ''
-    loadHistory()
   }
 
   // 更新地图标记
@@ -650,12 +645,14 @@ onUnmounted(() => {
 
 <style scoped lang="scss">
 .map-page {
-  min-height: 100vh;
+  height: 100vh;
   position: relative;
-  padding: 28px 30px 40px;
+  padding: 20px 22px 22px;
   font-family: "DM Sans", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
   color: #0f172a;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 .map-bg {
@@ -749,10 +746,10 @@ onUnmounted(() => {
 .map-layout {
   position: relative;
   z-index: 1;
-  display: grid;
-  grid-template-columns: minmax(0, 2.2fr) minmax(0, 1fr);
-  gap: 20px;
+  flex: 1;
+  display: flex;
   margin-top: 22px;
+  min-height: 0;
 }
 
 .glass-card {
@@ -768,29 +765,23 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 16px;
+  flex: 1;
+  min-height: 0;
 }
 
 .panel-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 18px;
-}
-
-.panel-title h3 {
-  margin: 0;
-  font-size: 18px;
-}
-
-.subtitle {
-  color: #64748b;
-  font-size: 12px;
 }
 
 .panel-actions {
   display: flex;
   align-items: center;
   gap: 10px;
+  width: 100%;
+  justify-content: flex-end;
 }
 
 .quality-select {
@@ -800,13 +791,16 @@ onUnmounted(() => {
 .map-shell {
   position: relative;
   flex: 1;
-  min-height: 520px;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .map-canvas {
   position: relative;
   width: 100%;
   height: 100%;
+  flex: 1;
   border-radius: 18px;
   overflow: hidden;
   border: 1px solid rgba(226, 232, 240, 0.7);
@@ -815,7 +809,7 @@ onUnmounted(() => {
 .map-container {
   width: 100%;
   height: 100%;
-  min-height: 500px;
+  min-height: 0;
 }
 
 .map-points {
@@ -910,17 +904,7 @@ onUnmounted(() => {
   color: #64748b;
 }
 
-.detail-panel {
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
-}
-
-.detail-card {
-  padding: 18px 20px;
-}
-
-.detail-header {
+.dialog-title {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -929,6 +913,7 @@ onUnmounted(() => {
   h3 {
     margin: 0;
     font-size: 18px;
+    font-weight: 700;
   }
 
   p {
@@ -947,7 +932,7 @@ onUnmounted(() => {
 }
 
 .metric-grid {
-  margin-top: 16px;
+  margin-top: 4px;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
@@ -1009,68 +994,6 @@ onUnmounted(() => {
   cursor: pointer;
 }
 
-.list-card {
-  padding: 16px 18px;
-}
-
-.list-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  color: #64748b;
-  font-size: 12px;
-
-  h4 {
-    margin: 0;
-    font-size: 14px;
-    color: #0f172a;
-  }
-}
-
-.list-body {
-  margin-top: 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.list-item {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 10px 12px;
-  border-radius: 12px;
-  border: 1px solid rgba(226, 232, 240, 0.8);
-  background: rgba(255, 255, 255, 0.75);
-  cursor: pointer;
-  transition: all 0.2s ease;
-  font-size: 12px;
-
-  &.active {
-    border-color: rgba(14, 165, 233, 0.6);
-    box-shadow: 0 12px 24px rgba(14, 165, 233, 0.15);
-  }
-
-  .name {
-    font-weight: 600;
-    color: #0f172a;
-  }
-
-  .meta {
-    display: block;
-    font-size: 11px;
-    color: #94a3b8;
-  }
-}
-
-.mini-quality {
-  padding: 4px 8px;
-  border-radius: 999px;
-  color: #fff;
-  font-size: 11px;
-  font-weight: 600;
-}
-
 .spinning {
   animation: spin 1s linear infinite;
 }
@@ -1097,12 +1020,8 @@ onUnmounted(() => {
 }
 
 @media (max-width: 1100px) {
-  .map-layout {
-    grid-template-columns: 1fr;
-  }
-
-  .map-shell {
-    min-height: 420px;
+  .trend-chart {
+    height: 200px;
   }
 }
 

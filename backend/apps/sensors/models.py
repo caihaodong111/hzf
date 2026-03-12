@@ -256,3 +256,65 @@ class Alert(models.Model):
         self.resolved = True
         self.resolved_at = timezone.now()
         self.save()
+
+
+class StationLocation(models.Model):
+    """站点坐标缓存表 - 用于避免重复地理编码"""
+
+    station_id = models.CharField(
+        max_length=50,
+        blank=True,
+        null=True,
+        unique=True,
+        verbose_name="站点ID",
+        help_text="优先用于匹配；允许为空（部分来源可能没有稳定ID）",
+    )
+    station_name = models.CharField(
+        max_length=100,
+        blank=True,
+        null=True,
+        db_index=True,
+        verbose_name="站点名称/断面名称",
+    )
+    province = models.CharField(max_length=50, blank=True, null=True, db_index=True, verbose_name="省份")
+    city = models.CharField(max_length=50, blank=True, null=True, db_index=True, verbose_name="城市")
+
+    longitude = models.DecimalField(
+        max_digits=10,
+        decimal_places=7,
+        blank=True,
+        null=True,
+        verbose_name="经度",
+        help_text="东经为正，西经为负",
+    )
+    latitude = models.DecimalField(
+        max_digits=10,
+        decimal_places=7,
+        blank=True,
+        null=True,
+        verbose_name="纬度",
+        help_text="北纬为正，南纬为负",
+    )
+
+    source = models.CharField(
+        max_length=20,
+        blank=True,
+        null=True,
+        verbose_name="坐标来源",
+        help_text="amap/manual/import/other",
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name="创建时间")
+    updated_at = models.DateTimeField(auto_now=True, verbose_name="更新时间")
+
+    class Meta:
+        db_table = "station_locations"
+        verbose_name = "站点坐标"
+        verbose_name_plural = "站点坐标"
+        indexes = [
+            models.Index(fields=["station_name", "province", "city"], name="station_loc_name_area_idx"),
+            models.Index(fields=["province", "city"], name="station_loc_area_idx"),
+        ]
+
+    def __str__(self):
+        return f"{self.station_id or ''} {self.station_name or ''}".strip()

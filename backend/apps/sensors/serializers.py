@@ -11,6 +11,7 @@ class SensorDataSerializer(serializers.ModelSerializer):
     class Meta:
         model = SensorData
         fields = ['id', 'station_id', 'station_name', 'location', 'province', 'city', 'river_basin',
+                  'longitude', 'latitude',
                   'temperature', 'ph',
                   'dissolved_oxygen', 'conductivity', 'turbidity', 'salinity',
                   'water_quality', 'permanganate', 'ammonia_nitrogen',
