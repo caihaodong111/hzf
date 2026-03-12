@@ -13,10 +13,11 @@ export function getDashboardOverview() {
 /**
  * 获取 AI 智能洞察
  */
-export function getAiInsight(question, context, model = 'glm-4.7-flash') {
+export function getAiInsight(question, context, model = 'glm-4.7', config = {}) {
   return request({
     url: '/dashboard/ai-insight/',
     method: 'post',
+    ...config,
     data: {
       question,
       context,

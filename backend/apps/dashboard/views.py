@@ -4,8 +4,9 @@
 import json
 import os
 import logging
-import urllib.request
-import urllib.error
+import time
+import requests
+import re
 
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
@@ -14,6 +15,7 @@ from django.utils import timezone
 from datetime import timedelta
 
 from apps.sensors.models import SensorData, SensorSnapshot, Alert
+from apps.dashboard.models import AiInsightLog
 from core.national_water_data import NationalWaterDataService
 from core.huawei_water_data import HuaweiWaterDataService
 from core.data_transformer import DataTransformer
@@ -31,6 +33,96 @@ POOR_WATER_QUALITIES = [
     'Ⅲ类', 'Ⅳ类', 'Ⅴ类', '劣Ⅴ类',
     '劣V', '劣V类',
 ]
+
+SMALLTALK_KEYWORDS = {
+    'hello', 'hi', 'hey',
+    '你好', '您好', '在吗', '在么', '在不在',
+    '哈喽', '嗨',
+}
+
+PROVINCE_ALIASES = {
+    '山西': '山西省',
+    '北京': '北京市',
+    '天津': '天津市',
+    '上海': '上海市',
+    '重庆': '重庆市',
+}
+
+
+def _extract_province_focus(question: str) -> str | None:
+    """从问题中提取省份/直辖市（用于定向补充上下文），返回规范名称。"""
+    if not question:
+        return None
+    text = question.strip()
+    if not text:
+        return None
+    m = re.search(r'([一-龥]{2,4})(省|市|自治区)', text)
+    if m:
+        return f"{m.group(1)}{m.group(2)}"
+    for short, full in PROVINCE_ALIASES.items():
+        if short in text:
+            return full
+    return None
+
+
+def _safe_create_ai_log(
+    *,
+    question: str,
+    answer: str | None,
+    model: str | None,
+    success: bool,
+    error_message: str | None,
+    request_payload: dict | None,
+    response_meta: dict | None,
+    request,
+    duration_ms: int | None,
+):
+    try:
+        client_ip = request.META.get('HTTP_X_FORWARDED_FOR') or request.META.get('REMOTE_ADDR') or None
+        user_agent = request.META.get('HTTP_USER_AGENT') or None
+        AiInsightLog.objects.create(
+            question=question,
+            answer=answer,
+            model=model,
+            success=success,
+            error_message=error_message,
+            request_payload=request_payload,
+            response_meta=response_meta,
+            ip_address=client_ip,
+            user_agent=user_agent,
+            duration_ms=duration_ms,
+        )
+    except Exception:
+        logger.warning("Failed to persist AiInsightLog", exc_info=True)
+
+
+def _build_ai_log_payload(context: dict) -> dict:
+    sensors = context.get('sensors') or []
+    province_sensors = context.get('province_sensors') or []
+    return {
+        'timestamp': context.get('timestamp'),
+        'data_source': context.get('data_source'),
+        'source_table': context.get('source_table'),
+        'summary': context.get('summary'),
+        'province_focus': context.get('province_focus'),
+        'ctx_sensors_station_ids': [s.get('station_id') for s in sensors if isinstance(s, dict) and s.get('station_id')][:50],
+        'province_sensors_station_ids': [
+            s.get('station_id') for s in province_sensors if isinstance(s, dict) and s.get('station_id')
+        ][:50],
+    }
+
+
+def _is_smalltalk(question: str) -> bool:
+    if not question:
+        return False
+    normalized = ''.join(question.strip().lower().split())
+    if not normalized:
+        return False
+    if normalized in SMALLTALK_KEYWORDS:
+        return True
+    if normalized in {'hello!', 'hi!', 'hey!'}:
+        return True
+    return False
 
 
 @api_view(['GET'])
@@ -132,21 +224,8 @@ def overview(request):
     alert_count = snapshot_qs.filter(water_quality__in=POOR_WATER_QUALITIES).count()
 
     # 格式化告警数据
-    alerts = []
-    if manual_mode:
-        alerts = list(Alert.objects.filter(data_source='manual').order_by('-created_at')[:5].values())
-    else:
-        for preferred in get_data_source_priority():
-            if preferred == 'huawei' and HuaweiWaterDataService.enabled():
-                raw_alerts = HuaweiWaterDataService.get_alerts(count=5)
-                alerts = [DataTransformer.transform_alert(a, 'huawei') for a in raw_alerts]
-                break
-            if preferred == 'national' and NationalWaterDataService.enabled():
-                raw_alerts = NationalWaterDataService.get_alerts(count=5)
-                alerts = [DataTransformer.transform_alert(a, 'national') for a in raw_alerts]
-                break
-        else:
-            alerts = []
+    # 告警列表：基于 sensor_data_latest（SensorSnapshot）即时规则生成，不触发外部抓取
+    alerts = _build_snapshot_rule_alerts(snapshot_qs, limit=5)
 
     # 计算水质分布：来自 sensor_data_latest（SensorSnapshot），不依赖 count / hours
     water_quality_dist = {
@@ -308,21 +387,119 @@ def ai_insight(request):
     if not question:
         return Response({'code': 400, 'message': '请提供问题或需求描述'}, status=400)
 
-    api_key = os.environ.get('BIGMODEL_API_KEY') or os.environ.get('ZHIPU_API_KEY')
-    if not api_key:
-        return Response(
-            {'code': 400, 'message': '未配置 BIGMODEL_API_KEY/ZHIPU_API_KEY'},
-            status=400
-        )
-
     client_context = payload.get('context') or {}
-    model = payload.get('model') or 'glm-4.7-flash'
+    model = payload.get('model') or 'glm-4.7'
+    t0 = time.monotonic()
+    client_ip = request.META.get('HTTP_X_FORWARDED_FOR') or request.META.get('REMOTE_ADDR') or '-'
+    logger.info(
+        "AI insight request (model=%s q_len=%s ip=%s)",
+        model,
+        len(question),
+        client_ip,
+    )
     try:
         snapshot_context = _build_snapshot_ai_context()
+        t1 = time.monotonic()
         merged_context = {**client_context, **snapshot_context}
+
+        # 若问题包含某省/市，补充该区域的快照样本，避免模型基于小样本误判“没有数据”
+        province_focus = _extract_province_focus(question)
+        if province_focus:
+            merged_context['province_focus'] = province_focus
+            merged_context['province_sensors'] = _get_snapshot_samples_by_province(province_focus, limit=20)
+
+        if _is_smalltalk(question):
+            summary = merged_context.get('summary') or {}
+            ts = merged_context.get('timestamp') or ''
+            quick_answer = (
+                "你好，我是智慧渔业水质监控系统的AI助手。\n"
+                f"- 数据时间：{ts or '未知'}\n"
+                f"- 监测断面：{summary.get('total_devices', 0)}\n"
+                f"- 在线监测：{summary.get('online_devices', 0)}\n"
+                f"- 未恢复告警：{summary.get('alert_count', 0)}\n\n"
+                "你可以直接问我：哪些断面风险最高？需要如何处理？我会基于最新快照给出建议。"
+            )
+            logger.info(
+                "AI insight smalltalk served locally (build_ctx=%.3fs total=%.3fs)",
+                (t1 - t0),
+                (time.monotonic() - t0),
+            )
+            _safe_create_ai_log(
+                question=question,
+                answer=quick_answer,
+                model='local',
+                success=True,
+                error_message=None,
+                request_payload={'question': question, 'context': _build_ai_log_payload(merged_context)},
+                response_meta={'source': 'local'},
+                request=request,
+                duration_ms=int((time.monotonic() - t0) * 1000),
+            )
+            return Response({'code': 200, 'message': 'success', 'data': {'answer': quick_answer, 'model': 'local'}})
+
+        api_key = os.environ.get('BIGMODEL_API_KEY') or os.environ.get('ZHIPU_API_KEY')
+        if not api_key:
+            logger.warning(
+                "AI insight blocked: missing BIGMODEL_API_KEY/ZHIPU_API_KEY (build_ctx=%.3fs total=%.3fs)",
+                (t1 - t0),
+                (time.monotonic() - t0),
+            )
+            _safe_create_ai_log(
+                question=question,
+                answer=None,
+                model=model,
+                success=False,
+                error_message='未配置 BIGMODEL_API_KEY/ZHIPU_API_KEY',
+                request_payload={'question': question, 'context': _build_ai_log_payload(merged_context)},
+                response_meta={'source': 'blocked'},
+                request=request,
+                duration_ms=int((time.monotonic() - t0) * 1000),
+            )
+            return Response(
+                {'code': 400, 'message': '未配置 BIGMODEL_API_KEY/ZHIPU_API_KEY'},
+                status=400
+            )
+
+        t2 = time.monotonic()
         answer = _call_bigmodel(api_key, model, question, merged_context)
+        t3 = time.monotonic()
+        logger.info(
+            "AI insight ok (model=%s build_ctx=%.3fs call_model=%.3fs total=%.3fs ctx_sensors=%s)",
+            model,
+            (t1 - t0),
+            (t3 - t2),
+            (t3 - t0),
+            len((merged_context.get('sensors') or [])),
+        )
+        _safe_create_ai_log(
+            question=question,
+            answer=answer,
+            model=model,
+            success=True,
+            error_message=None,
+            request_payload={'question': question, 'context': _build_ai_log_payload(merged_context)},
+            response_meta={'source': 'bigmodel'},
+            request=request,
+            duration_ms=int((t3 - t0) * 1000),
+        )
     except RuntimeError as exc:
+        logger.info(
+            "AI insight failed timing (model=%s elapsed=%.3fs)",
+            model,
+            (time.monotonic() - t0),
+        )
         logger.exception("AI insight failed (model=%s)", model)
+        _safe_create_ai_log(
+            question=question,
+            answer=None,
+            model=model,
+            success=False,
+            error_message=str(exc),
+            request_payload={'question': question},
+            response_meta={'source': 'bigmodel'},
+            request=request,
+            duration_ms=int((time.monotonic() - t0) * 1000),
+        )
         return Response({'code': 502, 'message': str(exc)}, status=502)
 
     return Response({
@@ -337,19 +514,25 @@ def ai_insight(request):
 
 def _call_bigmodel(api_key, model, question, context):
     system_prompt = (
-        "你是智慧渔业水质监控系统的AI助手，负责基于监测数据提供"
-        "风险识别、异常解释、运维建议与可执行行动。"
-        "上下文数据均来源于数据库表 sensor_data_latest（最新快照）。"
-        "回答需简洁、可落地，分点给出结论与建议。"
+        "你是智慧渔业水质监控系统的AI助手，负责基于监测数据提供风险识别、异常解释、运维建议与可执行行动。\n"
+        "数据来源与约束：\n"
+        "1) 你只能基于我提供的上下文 JSON（来自数据库表 sensor_data_latest 的最新快照）做判断；不得编造不存在的站点/省份/指标。\n"
+        "2) 上下文中的 sensors 可能是抽样/Top 列表；如果未看到某省数据，不允许断言“数据库没有”，只能说“本次样本未覆盖/未看到”。\n"
+        "3) 若提供 province_focus/province_sensors：必须优先用 province_sensors 做该省结论；若 province_sensors 为空，只能说“当前快照查询未覆盖该省（或该省样本为空）”，并建议刷新数据/检查筛选条件。\n"
+        "输出要求：\n"
+        "- 先给出【结论】（2-4条要点），再给出【依据】（引用上下文里的关键指标/站点），最后给出【建议】（可执行、分点）。\n"
     )
     payload = {
         'context': {
             'summary': context.get('summary'),
             'sensors': context.get('sensors'),
+            'province_focus': context.get('province_focus'),
+            'province_sensors': context.get('province_sensors'),
             'data_source': context.get('data_source'),
             'timestamp': context.get('timestamp'),
             'source_table': context.get('source_table'),
             'water_quality_distribution': context.get('water_quality_distribution'),
+            'province_distribution': context.get('province_distribution'),
         },
         'question': question
     }
@@ -361,38 +544,121 @@ def _call_bigmodel(api_key, model, question, context):
         }
     ]
 
-    request_body = json.dumps({
-        'model': model,
-        'messages': messages,
-        'max_tokens': 2048,
-        'temperature': 0.3
-    }).encode('utf-8')
-
-    req = urllib.request.Request(
-        'https://open.bigmodel.cn/api/paas/v4/chat/completions',
-        data=request_body,
-        headers={
-            'Content-Type': 'application/json',
-            'Authorization': f'Bearer {api_key}',
-        },
-        method='POST'
-    )
+    try:
+        max_tokens = int(os.environ.get('BIGMODEL_MAX_TOKENS', '1024'))
+    except (TypeError, ValueError):
+        max_tokens = 1024
 
     try:
-        with urllib.request.urlopen(req, timeout=30) as response:
-            raw = response.read()
-            data = json.loads(raw.decode('utf-8'))
-    except urllib.error.HTTPError as exc:
-        detail = exc.read().decode('utf-8') if exc.fp else str(exc)
-        raise RuntimeError(f'AI服务响应异常(HTTP {exc.code}): {detail}') from exc
-    except urllib.error.URLError as exc:
-        raise RuntimeError(f'AI服务连接失败: {exc.reason}') from exc
+        timeout_seconds = int(os.environ.get('BIGMODEL_TIMEOUT_SECONDS', '30'))
+    except (TypeError, ValueError):
+        timeout_seconds = 30
+
+    url = "https://open.bigmodel.cn/api/paas/v4/chat/completions"
+    payload = {
+        "model": model,
+        "messages": messages,
+        "max_tokens": max_tokens,
+        "stream": False,
+        "temperature": 0.3
+    }
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+
+    max_attempts = 3
+    for attempt in range(max_attempts):
+        try:
+            response = requests.post(url, json=payload, headers=headers, timeout=timeout_seconds)
+            logger.info(
+                "BigModel API status=%s log_id=%s",
+                response.status_code,
+                response.headers.get("x-log-id") or response.headers.get("X-Log-Id") or "-",
+            )
+            if response.status_code == 429:
+                retry_after = response.headers.get("Retry-After")
+                sleep_seconds = None
+                if retry_after:
+                    try:
+                        sleep_seconds = max(float(retry_after), 0.0)
+                    except (TypeError, ValueError):
+                        sleep_seconds = None
+                if sleep_seconds is None:
+                    sleep_seconds = 1.0 + attempt * 1.5
+                if attempt < max_attempts - 1:
+                    time.sleep(min(sleep_seconds, 10.0))
+                    continue
+                raise RuntimeError(f'AI服务触发限流(HTTP 429)，请稍后再试: {response.text}')
+
+            if 500 <= response.status_code < 600 and attempt < max_attempts - 1:
+                time.sleep(0.8 + attempt * 0.6)
+                continue
+
+            if response.status_code != 200:
+                raise RuntimeError(f'AI服务响应异常(HTTP {response.status_code}): {response.text}')
+            data = response.json()
+            break
+        except requests.exceptions.ConnectionError as exc:
+            raise RuntimeError(f'AI服务连接失败: {exc}') from exc
+        except requests.exceptions.Timeout as exc:
+            if attempt < max_attempts - 1:
+                time.sleep(0.8 + attempt * 0.6)
+                continue
+            raise RuntimeError(f'AI服务响应超时({timeout_seconds}s)') from exc
+        except requests.exceptions.RequestException as exc:
+            raise RuntimeError(f'AI服务请求失败: {exc}') from exc
+        except RuntimeError:
+            raise
+    else:
+        raise RuntimeError(f'AI服务响应超时({timeout_seconds}s)')
 
     choices = data.get('choices') or []
     if not choices:
         raise RuntimeError('AI服务未返回有效结果')
-    message = choices[0].get('message') or {}
-    return message.get('content', '').strip()
+
+    def _extract_content(choice):
+        if not isinstance(choice, dict):
+            return ''
+        message = choice.get('message')
+        if isinstance(message, dict):
+            content = message.get('content')
+            if isinstance(content, str) and content.strip():
+                return content.strip()
+            reasoning_content = message.get('reasoning_content')
+            if isinstance(reasoning_content, str) and reasoning_content.strip():
+                return reasoning_content.strip()
+            if isinstance(content, list):
+                parts = []
+                for item in content:
+                    if isinstance(item, str):
+                        parts.append(item)
+                        continue
+                    if isinstance(item, dict):
+                        parts.append(str(item.get('text') or item.get('content') or ''))
+                return '\n'.join([p for p in parts if p]).strip()
+            for key in ('final', 'answer', 'result', 'reasoning', 'reasoning_content'):
+                value = message.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+        text = choice.get('text')
+        if isinstance(text, str):
+            return text.strip()
+        return ''
+
+    answer = _extract_content(choices[0])
+    if not answer:
+        choice0 = choices[0] if isinstance(choices[0], dict) else {}
+        message0 = choice0.get('message') if isinstance(choice0, dict) else None
+        logger.warning(
+            "BigModel returned empty content (data_keys=%s choice_keys=%s message_keys=%s)",
+            list(data.keys()) if isinstance(data, dict) else type(data),
+            list(choice0.keys()) if isinstance(choice0, dict) else type(choice0),
+            list(message0.keys()) if isinstance(message0, dict) else type(message0),
+        )
+        raise RuntimeError('AI服务返回空内容，请稍后重试')
+
+    return answer
 
 
 @api_view(['GET', 'POST'])
@@ -437,9 +703,7 @@ def _get_device_counts_from_history(hours, manual_mode=False, allowed_sources=No
 def _build_snapshot_ai_context():
     """构建 AI 上下文：强制以 sensor_data_latest（SensorSnapshot）为准。"""
     snapshot_qs = SensorSnapshot.objects.exclude(station_id__isnull=True)
-    allowed_sources = get_allowed_sources()
-    if allowed_sources:
-        snapshot_qs = snapshot_qs.filter(data_source__in=allowed_sources)
+    # AI 上下文：只基于本地快照表，不触发外部抓取；不再按数据源过滤，避免误漏省份数据
 
     latest_time = snapshot_qs.aggregate(max_time=Max('recorded_at')).get('max_time')
     now = timezone.now()
@@ -470,6 +734,14 @@ def _build_snapshot_ai_context():
         row['water_quality']: row['count']
         for row in snapshot_qs.exclude(water_quality__isnull=True)
         .values('water_quality')
+        .annotate(count=Count('id'))
+    }
+
+    province_dist = {
+        row['province']: row['count']
+        for row in snapshot_qs.exclude(province__isnull=True)
+        .exclude(province__exact='')
+        .values('province')
         .annotate(count=Count('id'))
     }
 
@@ -549,5 +821,149 @@ def _build_snapshot_ai_context():
             'avg_turbidity': _to_float(avg_agg.get('avg_turbidity'), 2),
         },
         'water_quality_distribution': water_quality_dist,
+        'province_distribution': province_dist,
         'sensors': rows[:20],
     }
+
+
+def _get_snapshot_samples_by_province(province: str, limit: int = 20):
+    if not province or limit <= 0:
+        return []
+    snapshot_qs = SensorSnapshot.objects.exclude(station_id__isnull=True).filter(province__icontains=province)
+    latest_qs = snapshot_qs.order_by('-recorded_at')[:limit]
+    rows = list(latest_qs.values(
+        'station_id',
+        'station_name',
+        'province',
+        'city',
+        'river_basin',
+        'water_quality',
+        'temperature',
+        'ph',
+        'dissolved_oxygen',
+        'conductivity',
+        'turbidity',
+        'recorded_at',
+    ))
+
+    def _to_float(value, digits=2):
+        if value is None:
+            return None
+        try:
+            return round(float(value), digits)
+        except (TypeError, ValueError):
+            return None
+
+    for row in rows:
+        recorded_at = row.get('recorded_at')
+        row['timestamp'] = recorded_at.isoformat() if recorded_at else None
+        row['water_quality'] = DataTransformer.normalize_water_quality(row.get('water_quality'))
+        row['temperature'] = _to_float(row.get('temperature'), 2)
+        row['ph'] = _to_float(row.get('ph'), 2)
+        row['dissolved_oxygen'] = _to_float(row.get('dissolved_oxygen'), 2)
+        row['conductivity'] = _to_float(row.get('conductivity'), 2)
+        row['turbidity'] = _to_float(row.get('turbidity'), 2)
+        row.pop('recorded_at', None)
+
+    return rows
+
+
+def _build_snapshot_rule_alerts(snapshot_qs, limit=5):
+    """基于快照表即时生成告警列表（不触发外部接口）。"""
+    if limit <= 0:
+        return []
+
+    # 筛选满足任一规则的断面（取最近一批，避免全表扫描）
+    rule_qs = snapshot_qs.filter(
+        Q(water_quality__in=POOR_WATER_QUALITIES)
+        | Q(temperature__gt=30)
+        | Q(dissolved_oxygen__lt=5)
+        | Q(ph__lt=6.5)
+        | Q(ph__gt=8.5)
+    ).order_by('-recorded_at')[:200]
+
+    alerts = []
+    for record in rule_qs:
+        station_id = record.station_id
+        station_name = record.station_name
+        created_at = record.recorded_at.isoformat() if record.recorded_at else timezone.now().isoformat()
+
+        wq = DataTransformer.normalize_water_quality(record.water_quality)
+        if wq in ['Ⅳ', 'Ⅴ', '劣Ⅴ', 'Ⅳ类', 'Ⅴ类', '劣Ⅴ类', '劣V', '劣V类']:
+            level = 'critical' if wq in ['劣Ⅴ', '劣Ⅴ类', '劣V', '劣V类'] else 'warning'
+            raw = {
+                'station_id': station_id,
+                'station_name': station_name,
+                'type': 'water_quality',
+                'level': level,
+                'message': f'水质{wq}',
+                # DataTransformer.transform_alert 会把 value 转 Decimal；水质类为字符串，避免传入导致报错
+                'value': None,
+                'timestamp': created_at,
+            }
+            alerts.append(DataTransformer.transform_alert(raw, 'database'))
+
+        if record.temperature is not None:
+            try:
+                if float(record.temperature) > 30:
+                    raw = {
+                        'station_id': station_id,
+                        'station_name': station_name,
+                        'type': 'temperature',
+                        'level': 'warning',
+                        'message': '水温偏高',
+                        'value': float(record.temperature),
+                        'value_unit': '℃',
+                        'timestamp': created_at,
+                    }
+                    alerts.append(DataTransformer.transform_alert(raw, 'database'))
+            except (TypeError, ValueError):
+                pass
+
+        if record.dissolved_oxygen is not None:
+            try:
+                if float(record.dissolved_oxygen) < 5:
+                    raw = {
+                        'station_id': station_id,
+                        'station_name': station_name,
+                        'type': 'dissolved_oxygen',
+                        'level': 'warning',
+                        'message': '溶解氧偏低',
+                        'value': float(record.dissolved_oxygen),
+                        'value_unit': 'mg/L',
+                        'timestamp': created_at,
+                    }
+                    alerts.append(DataTransformer.transform_alert(raw, 'database'))
+            except (TypeError, ValueError):
+                pass
+
+        if record.ph is not None:
+            try:
+                ph_value = float(record.ph)
+                if ph_value < 6.5 or ph_value > 8.5:
+                    raw = {
+                        'station_id': station_id,
+                        'station_name': station_name,
+                        'type': 'ph',
+                        'level': 'warning',
+                        'message': 'pH异常',
+                        'value': ph_value,
+                        'timestamp': created_at,
+                    }
+                    alerts.append(DataTransformer.transform_alert(raw, 'database'))
+            except (TypeError, ValueError):
+                pass
+
+        if len(alerts) >= limit:
+            break
+
+    # 优先 critical，再按时间倒序（created_at 为字符串，按 ISO 处理）
+    level_rank = {'critical': 0, 'warning': 1, 'info': 2}
+    alerts.sort(
+        key=lambda a: (
+            level_rank.get(a.get('alert_level'), 9),
+            a.get('created_at') or '',
+        ),
+        reverse=False,
+    )
+    return alerts[:limit]

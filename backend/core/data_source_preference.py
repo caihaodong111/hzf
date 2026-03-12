@@ -38,11 +38,13 @@ def get_data_source_priority() -> List[str]:
     mode = get_data_source_mode()
     if mode == DataSourcePreference.MODE_MANUAL:
         return ['huawei']
-    return ['huawei', 'national']
+    # 自动模式：不主动触发华为云拉取，仅使用国家平台数据源
+    return ['national']
 
 
 def get_allowed_sources() -> List[str]:
     mode = get_data_source_mode()
     if mode == DataSourcePreference.MODE_MANUAL:
         return ['huawei', 'manual']
-    return ['huawei', 'national']
+    # 自动模式：仅展示国家平台数据（不混入华为云快照）
+    return ['national']

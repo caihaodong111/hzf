@@ -81,13 +81,23 @@
             <textarea
               v-model="question"
               placeholder="输入水质分析相关问题..."
-              @keydown.enter.exact.prevent="askAi"
+              @keydown.enter.exact.prevent="handleSendClick"
               rows="1"
               ref="inputRef"
             ></textarea>
-            <button class="send-btn" :disabled="!question.trim() || loading" @click="askAi" type="button">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <button
+              class="send-btn"
+              :class="{ cancel: loading }"
+              :disabled="!question.trim() && !loading"
+              :title="loading ? '取消' : '发送'"
+              @click="handleSendClick"
+              type="button"
+            >
+              <svg v-if="!loading" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z" />
+              </svg>
+              <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M18 6L6 18M6 6l12 12" />
               </svg>
             </button>
           </div>
@@ -100,15 +110,16 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, nextTick } from 'vue'
+import { ref, computed, onMounted, nextTick, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { getDashboardOverview, getAiInsight } from '@/api/dashboard'
+import { getDashboardOverview } from '@/api/dashboard'
+import aiAssistantStore from '@/stores/aiAssistantStore'
 
 const overview = ref({})
-const loading = ref(false)
 const loadingOverview = ref(false)
-const question = ref('')
-const messages = ref([])
+const loading = aiAssistantStore.loading
+const question = aiAssistantStore.draft
+const messages = aiAssistantStore.messages
 const chatBodyRef = ref(null)
 const inputRef = ref(null)
 
@@ -121,7 +132,6 @@ const quickPrompts = [
 
 const summaryMap = computed(() => ({
   监测断面: overview.value?.summary?.total_devices || 0,
-  在线监测: overview.value?.summary?.online_devices || 0,
   未恢复告警: overview.value?.summary?.alert_count || 0
 }))
 
@@ -151,24 +161,26 @@ const loadOverview = async () => {
 }
 
 const applyPrompt = (text) => {
-  question.value = text
-  askAi()
+  aiAssistantStore.setDraft(text)
+  inputRef.value?.focus?.()
 }
 
 const clearChat = () => {
-  messages.value = []
+  aiAssistantStore.clearChat()
+}
+
+const handleSendClick = () => {
+  if (loading.value) {
+    aiAssistantStore.cancel()
+    return
+  }
+  askAi()
 }
 
 const askAi = async () => {
   const trimmed = question.value.trim()
   if (!trimmed || loading.value) return
 
-  const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-  messages.value.push({ role: 'user', content: trimmed, time })
-  question.value = ''
-  await scrollToBottom()
-
-  loading.value = true
   try {
     const context = {
       summary: overview.value?.summary,
@@ -176,26 +188,26 @@ const askAi = async () => {
       data_source: overview.value?.data_source,
       timestamp: overview.value?.timestamp
     }
-    const res = await getAiInsight(trimmed, context)
-    messages.value.push({
-      role: 'assistant',
-      content: res?.data?.answer || '未获取到 AI 回复',
-      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    })
+    await aiAssistantStore.ask({ question: trimmed, context, model: 'glm-4.7' })
   } catch (error) {
-    const backendMessage = error?.response?.data?.message
-    messages.value.push({
-      role: 'assistant',
-      content: backendMessage ? `分析失败：${backendMessage}` : '分析失败，请稍后重试。',
-      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    })
+    // store 内部已处理展示
   } finally {
-    loading.value = false
     await scrollToBottom()
   }
 }
 
-onMounted(loadOverview)
+watch(
+  () => messages.value.length,
+  async () => {
+    await scrollToBottom()
+  }
+)
+
+onMounted(() => {
+  aiAssistantStore.loadFromStorage()
+  loadOverview()
+  scrollToBottom()
+})
 </script>
 
 <style scoped lang="scss">
@@ -544,6 +556,14 @@ onMounted(loadOverview)
     width: 18px;
     height: 18px;
   }
+}
+
+.send-btn.cancel {
+  background: #ef4444;
+}
+
+.send-btn.cancel:hover {
+  opacity: 0.92;
 }
 
 .input-tip {

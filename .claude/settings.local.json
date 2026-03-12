@@ -32,7 +32,8 @@
       "Bash(conda info:*)",
       "Bash(xargs kill:*)",
       "Bash(grep:*)",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "Bash(/opt/anaconda3/envs/hzf/bin/python:*)"
     ]
   }
 }
