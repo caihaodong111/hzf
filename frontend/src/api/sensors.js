@@ -48,12 +48,25 @@ export function getAreaOptions() {
  * 获取历史数据
  * @param {string} stationId - 站点ID
  * @param {number} hours - 小时数
+ * @param {number} limit - 数据条数限制（0=不限制）
  */
-export function getHistoricalData(stationId, hours = 24) {
+export function getHistoricalData(stationId, hours = 24, limit = 0) {
   return request({
     url: '/sensors/data/history/',
     method: 'get',
-    params: { station_id: stationId, hours }
+    params: { station_id: stationId, hours, limit }
+  })
+}
+
+/**
+ * 获取站点所有历史数据
+ * @param {string} stationId - 站点ID
+ */
+export function getAllHistoricalData(stationId) {
+  return request({
+    url: '/sensors/data/all_history/',
+    method: 'get',
+    params: { station_id: stationId }
   })
 }
 

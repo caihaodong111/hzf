@@ -55,7 +55,14 @@
             </div>
             <el-tag type="danger" effect="dark" round>高风险优先</el-tag>
           </div>
-          <el-table :data="riskTable" style="width: 100%" height="320" class="custom-table compact risk-table">
+          <el-table
+            :data="riskTable"
+            style="width: 100%"
+            height="320"
+            class="custom-table compact risk-table"
+            @row-click="handleRiskRowClick"
+            :row-class-name="getRiskRowClass"
+          >
             <el-table-column prop="station_name" label="站点" min-width="140" show-overflow-tooltip>
               <template #default="{ row }">
                 <div class="risk-name">{{ row.station_name || '-' }}</div>
@@ -85,14 +92,32 @@
             <div class="title-info">
               <h3>关键指标趋势</h3>
               <span class="subtitle">当前站点: {{ trendDeviceName }}</span>
+              <span v-if="currentStationHistory.length > 0" class="data-count">
+                累计数据点: {{ currentStationHistory.length }} 个
+              </span>
+              <span v-if="historyTimeRange" class="time-range-badge">
+                <el-icon><Clock /></el-icon>
+                {{ timeRangeText }}
+              </span>
             </div>
-            <div class="card-search">
+            <div class="card-actions">
+              <el-button
+                type="primary"
+                size="small"
+                :loading="loadingAllHistory"
+                :icon="Download"
+                @click="loadAllHistory"
+                class="load-all-btn"
+              >
+                {{ loadingAllHistory ? '加载中...' : '加载全部历史' }}
+              </el-button>
               <el-input
                 v-model="trendSearch"
                 placeholder="搜索站点..."
                 :prefix-icon="Search"
                 @keyup.enter="applyTrendSearch"
                 size="small"
+                class="search-input"
               />
             </div>
           </div>
@@ -101,12 +126,12 @@
 
         <section class="charts-row">
           <section class="chart-secondary glass-card quality-chart">
-            <div class="card-title">水质类别占比</div>
+            <div class="card-title">水质类别占比 <span class="live-indicator">实时</span></div>
             <div ref="qualityChartRef" class="chart-box"></div>
           </section>
 
           <section class="chart-secondary glass-card province-chart">
-            <div class="card-title">省内站点 Top 10</div>
+            <div class="card-title">省内站点 Top 10 <span class="live-indicator">实时</span></div>
             <div ref="provinceChartRef" class="chart-box"></div>
           </section>
         </section>
@@ -116,12 +141,12 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import * as echarts from 'echarts'
-import { getDashboardOverview, getRealtimeData, getHistoricalData } from '@/api/sensors'
+import { getDashboardOverview, getRealtimeData, getHistoricalData, getAllHistoricalData } from '@/api/sensors'
 import { getDataSourceSettings } from '@/api/settings'
 import sensorStore from '@/stores/sensorStore'
-import { Refresh, Search } from '@element-plus/icons-vue'
+import { Refresh, Search, Download, Clock } from '@element-plus/icons-vue'
 
 const timeRange = ref(24)
 const loading = ref(false)
@@ -133,6 +158,12 @@ const lastUpdate = ref('')
 const trendDeviceId = ref('')
 const trendHistory = ref([])
 const trendSearch = ref('')
+const loadingAllHistory = ref(false)
+const historyTimeRange = ref(null) // 存储历史数据时间范围
+
+// 持久化存储所有历史趋势数据，按站点ID分组
+const trendHistoryCache = ref(new Map()) // Map<stationId, HistoryDataPoint[]>
+const currentStationHistory = ref([]) // 当前显示的趋势数据（合并后的完整数据）
 
 const dataSourceLabel = computed(() => {
   const map = { national: '国家水质', huawei: '华为云', database: '数据库', manual: '手动入库', auto: '自动' }
@@ -226,32 +257,79 @@ const initCharts = async () => {
   window.addEventListener('resize', resizeHandler)
 }
 
+// 更新图表 - 带动画效果
 const updateCharts = () => {
-  const trendCount = trendHistory.value.length
+  // 使用当前站点的历史数据（包含所有累计数据）
+  const displayHistory = currentStationHistory.value.length > 0 ? currentStationHistory.value : trendHistory.value
+  const trendCount = displayHistory.length
   const showTrendPoints = trendCount <= 1
+
+  // 水质类别占比饼图 - 添加动画
   const qData = Object.entries(qualityColors)
     .map(([name, color]) => ({
       name,
       value: sensors.value.filter(s => s.water_quality === name).length,
-      itemStyle: { color }
+      itemStyle: {
+        color,
+        borderRadius: 8,
+        borderColor: '#fff',
+        borderWidth: 2
+      }
     }))
     .filter(item => item.value > 0)
 
   charts[0]?.setOption({
-    tooltip: { trigger: 'item' },
+    tooltip: {
+      trigger: 'item',
+      backgroundColor: 'rgba(255, 255, 255, 0.95)',
+      borderRadius: 12,
+      padding: [12, 16],
+      textStyle: { fontSize: 13 }
+    },
     series: [
       {
         type: 'pie',
-        radius: ['60%', '85%'],
-        avoidLabelOverlap: false,
-        itemStyle: { borderRadius: 6 },
-        label: { show: false },
-        data: qData
+        radius: ['55%', '82%'],
+        avoidLabelOverlap: true,
+        itemStyle: { borderRadius: 8 },
+        label: {
+          show: true,
+          position: 'outside',
+          formatter: '{b}: {c}个\n({d}%)',
+          fontSize: 11,
+          color: '#475569'
+        },
+        labelLine: {
+          show: true,
+          length: 15,
+          length2: 10,
+          smooth: true
+        },
+        emphasis: {
+          scale: true,
+          scaleSize: 15,
+          itemStyle: {
+            shadowBlur: 20,
+            shadowOffsetX: 0,
+            shadowColor: 'rgba(0, 0, 0, 0.3)'
+          }
+        },
+        data: qData,
+        // 添加动画配置
+        animationType: 'expansion',
+        animationEasing: 'cubicOut',
+        animationDelay: (idx) => idx * 100
       }
-    ]
-  })
+    ],
+    // 添加整体动画
+    animation: true,
+    animationDuration: 1500,
+    animationEasing: 'cubicOut',
+    animationDelayUpdate: (idx) => idx * 5
+  }, true) // true 表示不合并，完全重绘
 
-  const times = trendHistory.value.map(item => {
+  // 关键指标趋势图 - 使用持久化的数据
+  const times = displayHistory.map(item => {
     if (item?.time) return item.time
     const ts = item?.timestamp
     if (typeof ts === 'string') return timeRange.value >= 24 ? ts.slice(5, 10) : ts.slice(11, 16)
@@ -259,110 +337,174 @@ const updateCharts = () => {
   })
 
   charts[3]?.setOption({
-    tooltip: { trigger: 'axis', backgroundColor: 'rgba(255,255,255,0.9)', borderRadius: 12 },
-    legend: { type: 'scroll', icon: 'circle', top: 8, left: 20, right: 20 },
-    grid: { left: 44, right: 24, top: 56, bottom: 40 },
-    xAxis: { type: 'category', data: times, axisLine: { show: false } },
-    yAxis: { type: 'value', splitLine: { lineStyle: { type: 'dashed' } } },
+    tooltip: {
+      trigger: 'axis',
+      backgroundColor: 'rgba(255,255,255,0.95)',
+      borderRadius: 12,
+      padding: [12, 16],
+      textStyle: { fontSize: 12 },
+      axisPointer: {
+        type: 'cross',
+        crossStyle: { color: '#999' },
+        lineStyle: { type: 'dashed' }
+      }
+    },
+    legend: {
+      type: 'scroll',
+      icon: 'circle',
+      top: 8,
+      left: 20,
+      right: 20,
+      itemGap: 12,
+      textStyle: { fontSize: 11 }
+    },
+    grid: { left: 50, right: 30, top: 60, bottom: 50 },
+    xAxis: {
+      type: 'category',
+      data: times,
+      axisLine: { show: false },
+      axisTick: { show: false },
+      axisLabel: { fontSize: 10, color: '#64748b' }
+    },
+    yAxis: {
+      type: 'value',
+      splitLine: { lineStyle: { type: 'dashed', color: '#e2e8f0' } },
+      axisLabel: { fontSize: 10, color: '#64748b' }
+    },
     series: [
       {
         name: '溶解氧',
         type: 'line',
         smooth: true,
-        showSymbol: showTrendPoints,
-        symbolSize: showTrendPoints ? 6 : 4,
-        data: trendHistory.value.map(item => item.dissolved_oxygen),
-        lineStyle: { width: showTrendPoints ? 0 : 3, color: '#0ea5e9' },
+        smoothMonotone: 'x',
+        showSymbol: trendCount <= 20,
+        symbolSize: trendCount <= 20 ? 6 : 4,
+        data: displayHistory.map(item => item.dissolved_oxygen),
+        lineStyle: { width: 2.5, color: '#0ea5e9' },
+        itemStyle: { color: '#0ea5e9', borderColor: '#fff', borderWidth: 2 },
         areaStyle: {
           color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-            { offset: 0, color: 'rgba(9, 132, 227, 0.2)' },
-            { offset: 1, color: 'transparent' }
+            { offset: 0, color: 'rgba(14, 165, 233, 0.25)' },
+            { offset: 1, color: 'rgba(14, 165, 233, 0.02)' }
           ])
-        }
+        },
+        emphasis: { focus: 'series' }
       },
       {
         name: 'pH值',
         type: 'line',
         smooth: true,
-        showSymbol: showTrendPoints,
-        symbolSize: showTrendPoints ? 6 : 4,
-        data: trendHistory.value.map(item => item.ph),
-        lineStyle: { width: showTrendPoints ? 0 : 3, color: '#14b8a6' }
+        smoothMonotone: 'x',
+        showSymbol: trendCount <= 20,
+        symbolSize: trendCount <= 20 ? 6 : 4,
+        data: displayHistory.map(item => item.ph),
+        lineStyle: { width: 2.5, color: '#14b8a6' },
+        itemStyle: { color: '#14b8a6', borderColor: '#fff', borderWidth: 2 },
+        emphasis: { focus: 'series' }
       },
       {
         name: '电导率',
         type: 'line',
         smooth: true,
-        showSymbol: showTrendPoints,
-        symbolSize: showTrendPoints ? 6 : 4,
-        data: trendHistory.value.map(item => item.conductivity),
-        lineStyle: { width: showTrendPoints ? 0 : 3, color: '#6366f1' }
+        smoothMonotone: 'x',
+        showSymbol: trendCount <= 20,
+        symbolSize: trendCount <= 20 ? 6 : 4,
+        data: displayHistory.map(item => item.conductivity),
+        lineStyle: { width: 2.5, color: '#6366f1' },
+        itemStyle: { color: '#6366f1', borderColor: '#fff', borderWidth: 2 },
+        emphasis: { focus: 'series' }
       },
       {
         name: '浊度',
         type: 'line',
         smooth: true,
-        showSymbol: showTrendPoints,
-        symbolSize: showTrendPoints ? 6 : 4,
-        data: trendHistory.value.map(item => item.turbidity),
-        lineStyle: { width: showTrendPoints ? 0 : 3, color: '#f97316' }
+        smoothMonotone: 'x',
+        showSymbol: trendCount <= 20,
+        symbolSize: trendCount <= 20 ? 6 : 4,
+        data: displayHistory.map(item => item.turbidity),
+        lineStyle: { width: 2.5, color: '#f97316' },
+        itemStyle: { color: '#f97316', borderColor: '#fff', borderWidth: 2 },
+        emphasis: { focus: 'series' }
       },
       {
         name: '高锰酸盐指数',
         type: 'line',
         smooth: true,
-        showSymbol: showTrendPoints,
-        symbolSize: showTrendPoints ? 6 : 4,
-        data: trendHistory.value.map(item => item.permanganate_index ?? item.permanganate),
-        lineStyle: { width: showTrendPoints ? 0 : 3, color: '#f59e0b' }
+        smoothMonotone: 'x',
+        showSymbol: trendCount <= 20,
+        symbolSize: trendCount <= 20 ? 6 : 4,
+        data: displayHistory.map(item => item.permanganate_index ?? item.permanganate),
+        lineStyle: { width: 2.5, color: '#f59e0b' },
+        itemStyle: { color: '#f59e0b', borderColor: '#fff', borderWidth: 2 },
+        emphasis: { focus: 'series' }
       },
       {
         name: '氨氮',
         type: 'line',
         smooth: true,
-        showSymbol: showTrendPoints,
-        symbolSize: showTrendPoints ? 6 : 4,
-        data: trendHistory.value.map(item => item.ammonia_nitrogen),
-        lineStyle: { width: showTrendPoints ? 0 : 3, color: '#ef4444' }
+        smoothMonotone: 'x',
+        showSymbol: trendCount <= 20,
+        symbolSize: trendCount <= 20 ? 6 : 4,
+        data: displayHistory.map(item => item.ammonia_nitrogen),
+        lineStyle: { width: 2.5, color: '#ef4444' },
+        itemStyle: { color: '#ef4444', borderColor: '#fff', borderWidth: 2 },
+        emphasis: { focus: 'series' }
       },
       {
         name: '总磷',
         type: 'line',
         smooth: true,
-        showSymbol: showTrendPoints,
-        symbolSize: showTrendPoints ? 6 : 4,
-        data: trendHistory.value.map(item => item.total_phosphorus),
-        lineStyle: { width: showTrendPoints ? 0 : 3, color: '#22c55e' }
+        smoothMonotone: 'x',
+        showSymbol: trendCount <= 20,
+        symbolSize: trendCount <= 20 ? 6 : 4,
+        data: displayHistory.map(item => item.total_phosphorus),
+        lineStyle: { width: 2.5, color: '#22c55e' },
+        itemStyle: { color: '#22c55e', borderColor: '#fff', borderWidth: 2 },
+        emphasis: { focus: 'series' }
       },
       {
         name: '总氮',
         type: 'line',
         smooth: true,
-        showSymbol: showTrendPoints,
-        symbolSize: showTrendPoints ? 6 : 4,
-        data: trendHistory.value.map(item => item.total_nitrogen),
-        lineStyle: { width: showTrendPoints ? 0 : 3, color: '#0f766e' }
+        smoothMonotone: 'x',
+        showSymbol: trendCount <= 20,
+        symbolSize: trendCount <= 20 ? 6 : 4,
+        data: displayHistory.map(item => item.total_nitrogen),
+        lineStyle: { width: 2.5, color: '#0f766e' },
+        itemStyle: { color: '#0f766e', borderColor: '#fff', borderWidth: 2 },
+        emphasis: { focus: 'series' }
       },
       {
         name: '叶绿素a',
         type: 'line',
         smooth: true,
-        showSymbol: showTrendPoints,
-        symbolSize: showTrendPoints ? 6 : 4,
-        data: trendHistory.value.map(item => item.chlorophyll_a),
-        lineStyle: { width: showTrendPoints ? 0 : 3, color: '#a855f7' }
+        smoothMonotone: 'x',
+        showSymbol: trendCount <= 20,
+        symbolSize: trendCount <= 20 ? 6 : 4,
+        data: displayHistory.map(item => item.chlorophyll_a),
+        lineStyle: { width: 2.5, color: '#a855f7' },
+        itemStyle: { color: '#a855f7', borderColor: '#fff', borderWidth: 2 },
+        emphasis: { focus: 'series' }
       },
       {
         name: '藻密度',
         type: 'line',
         smooth: true,
-        showSymbol: showTrendPoints,
-        symbolSize: showTrendPoints ? 6 : 4,
-        data: trendHistory.value.map(item => item.algae_density),
-        lineStyle: { width: showTrendPoints ? 0 : 3, color: '#64748b' }
+        smoothMonotone: 'x',
+        showSymbol: trendCount <= 20,
+        symbolSize: trendCount <= 20 ? 6 : 4,
+        data: displayHistory.map(item => item.algae_density),
+        lineStyle: { width: 2.5, color: '#64748b' },
+        itemStyle: { color: '#64748b', borderColor: '#fff', borderWidth: 2 },
+        emphasis: { focus: 'series' }
       }
-    ]
-  })
+    ],
+    // 添加动画配置
+    animation: true,
+    animationDuration: 800,
+    animationEasing: 'cubicOut',
+    animationDelayUpdate: (idx) => idx * 50
+  }, true)
 
   charts[1]?.setOption({
     series: [
@@ -377,19 +519,29 @@ const updateCharts = () => {
           show: true,
           overlap: false,
           roundCap: true,
-          width: 8,
+          width: 10,
           itemStyle: { color: '#f59e0b' }
         },
-        axisLine: { lineStyle: { width: 8 } },
+        axisLine: {
+          lineStyle: {
+            width: 10,
+            color: [[1, 'rgba(245, 158, 11, 0.15)']]
+          }
+        },
         splitLine: { show: false },
         axisTick: { show: false },
         axisLabel: { show: false },
         detail: { show: false },
-        data: [{ value: qualityIndex.value }]
+        data: [{ value: qualityIndex.value }],
+        // 添加动画
+        animation: true,
+        animationDuration: 1000,
+        animationEasing: 'cubicOut'
       }
     ]
-  })
+  }, true)
 
+  // 省份站点Top 10 - 添加动画效果
   const provinceCount = {}
   sensors.value.forEach(sensor => {
     const value = typeof sensor.province === 'string' ? sensor.province.trim() : sensor.province
@@ -403,26 +555,80 @@ const updateCharts = () => {
   }
 
   const sorted = entries.sort((a, b) => b[1] - a[1]).slice(0, 10)
+  const maxCount = sorted.length > 0 ? sorted[0][1] : 1
 
   charts[2]?.setOption({
-    tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
-    grid: { left: '3%', right: '4%', bottom: '8%', containLabel: true },
-    xAxis: { type: 'category', data: sorted.map(item => item[0]), axisLabel: { rotate: 30 } },
-    yAxis: { type: 'value' },
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'shadow' },
+      backgroundColor: 'rgba(255, 255, 255, 0.95)',
+      borderRadius: 12,
+      padding: [12, 16],
+      formatter: '{b}: {c}个站点'
+    },
+    grid: { left: '5%', right: '5%', bottom: '15%', top: '10%', containLabel: true },
+    xAxis: {
+      type: 'category',
+      data: sorted.map(item => item[0]),
+      axisLabel: {
+        rotate: 35,
+        fontSize: 11,
+        color: '#64748b',
+        interval: 0
+      },
+      axisLine: { show: false },
+      axisTick: { show: false }
+    },
+    yAxis: {
+      type: 'value',
+      splitLine: { lineStyle: { type: 'dashed', color: '#e2e8f0' } },
+      axisLabel: { fontSize: 11, color: '#64748b' }
+    },
     series: [
       {
         type: 'bar',
         data: sorted.map(item => item[1]),
         itemStyle: {
-          color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-            { offset: 0, color: '#0ea5e9' },
-            { offset: 1, color: '#14b8a6' }
-          ]),
+          color: (params) => {
+            const colors = [
+              new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                { offset: 0, color: '#00b894' },
+                { offset: 1, color: '#55efc4' }
+              ]),
+              new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                { offset: 0, color: '#0ea5e9' },
+                { offset: 1, color: '#14b8a6' }
+              ]),
+              new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                { offset: 0, color: '#6366f1' },
+                { offset: 1, color: '#8b5cf6' }
+              ]),
+              new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                { offset: 0, color: '#f59e0b' },
+                { offset: 1, color: '#fbbf24' }
+              ])
+            ]
+            return colors[params.dataIndex % colors.length]
+          },
           borderRadius: [6, 6, 0, 0]
-        }
+        },
+        label: {
+          show: true,
+          position: 'top',
+          fontSize: 11,
+          color: '#475569',
+          formatter: '{c}'
+        },
+        // 添加生长动画
+        animationDelay: (idx) => idx * 100
       }
-    ]
-  })
+    ],
+    // 添加动画配置
+    animation: true,
+    animationDuration: 1500,
+    animationEasing: 'cubicOut',
+    animationDelayUpdate: (idx) => idx * 50
+  }, true)
 }
 
 const loadData = async () => {
@@ -431,7 +637,7 @@ const loadData = async () => {
     sensors.value = sensorStore.cache.sensors.value
     overview.value = sensorStore.cache.overview.value
     if (!trendDeviceId.value && sensors.value.length) {
-      trendDeviceId.value = sensors.value[0].station_id
+      trendDeviceId.value = riskTable.value[0]?.station_id || sensors.value[0].station_id
     }
     // 立即更新图表
     await nextTick()
@@ -459,7 +665,7 @@ const loadData = async () => {
       sensors.value = realtimeRes.data?.sensors || []
       lastUpdate.value = realtimeRes.data?.timestamp || lastUpdate.value
       if (!trendDeviceId.value && sensors.value.length) {
-        trendDeviceId.value = sensors.value[0].station_id
+        trendDeviceId.value = riskTable.value[0]?.station_id || sensors.value[0].station_id
       }
     }
 
@@ -481,24 +687,111 @@ const loadDataSourceMode = async () => {
   }
 }
 
+// 加载趋势数据 - 支持数据持久化
 const loadTrend = async () => {
   if (!trendDeviceId.value) {
     trendHistory.value = []
+    currentStationHistory.value = []
     return
   }
 
   try {
     const res = await getHistoricalData(trendDeviceId.value, timeRange.value)
     if (res?.code === 200 && Array.isArray(res.data?.data)) {
-      trendHistory.value = res.data.data
+      const newData = res.data.data
+
+      // 合并到缓存中（去除重复时间点）
+      const existingCache = trendHistoryCache.value.get(trendDeviceId.value) || []
+      const mergedData = mergeHistoryData(existingCache, newData)
+
+      // 更新缓存
+      trendHistoryCache.value.set(trendDeviceId.value, mergedData)
+
+      // 更新当前显示的数据
+      currentStationHistory.value = mergedData
+      trendHistory.value = newData
     } else {
-      trendHistory.value = []
+      // 如果请求失败，使用缓存的数据
+      const cached = trendHistoryCache.value.get(trendDeviceId.value) || []
+      currentStationHistory.value = cached
+      trendHistory.value = cached
     }
   } catch (error) {
     console.error('加载趋势数据失败:', error)
-    trendHistory.value = []
+    // 出错时使用缓存的数据
+    const cached = trendHistoryCache.value.get(trendDeviceId.value) || []
+    currentStationHistory.value = cached
+    trendHistory.value = cached
   }
 }
+
+// 合并历史数据，去除重复的时间点
+const mergeHistoryData = (existing, newData) => {
+  if (!existing || existing.length === 0) return newData
+  if (!newData || newData.length === 0) return existing
+
+  // 使用Map去重，以timestamp为key
+  const dataMap = new Map()
+
+  // 先添加现有数据
+  existing.forEach(item => {
+    if (item?.timestamp) {
+      dataMap.set(item.timestamp, item)
+    }
+  })
+
+  // 再添加新数据（新数据会覆盖同时间点的旧数据）
+  newData.forEach(item => {
+    if (item?.timestamp) {
+      dataMap.set(item.timestamp, item)
+    }
+  })
+
+  // 转换回数组并按时间排序
+  const merged = Array.from(dataMap.values()).sort((a, b) => {
+    return new Date(a.timestamp) - new Date(b.timestamp)
+  })
+
+  return merged
+}
+
+// 加载站点所有历史数据
+const loadAllHistory = async () => {
+  if (!trendDeviceId.value) return
+
+  loadingAllHistory.value = true
+  try {
+    const res = await getAllHistoricalData(trendDeviceId.value)
+    if (res?.code === 200 && res?.data) {
+      const allData = res.data.data || []
+
+      // 更新时间范围信息
+      if (res.data.time_range) {
+        historyTimeRange.value = {
+          start: new Date(res.data.time_range.start).toLocaleDateString('zh-CN'),
+          end: new Date(res.data.time_range.end).toLocaleDateString('zh-CN')
+        }
+      }
+
+      // 合并到缓存
+      trendHistoryCache.value.set(trendDeviceId.value, allData)
+      currentStationHistory.value = allData
+
+      // 更新图表
+      updateCharts()
+    }
+  } catch (error) {
+    console.error('加载全部历史数据失败:', error)
+  } finally {
+    loadingAllHistory.value = false
+  }
+}
+
+// 格式化时间范围显示
+const timeRangeText = computed(() => {
+  if (!historyTimeRange.value) return ''
+  return `${historyTimeRange.value.start} ~ ${historyTimeRange.value.end}`
+})
 
 const applyTrendSearch = () => {
   const keyword = trendSearch.value.trim()
@@ -510,7 +803,59 @@ const applyTrendSearch = () => {
   })
   if (match) {
     trendDeviceId.value = match.station_id
+    // 切换站点时使用缓存数据
+    const cached = trendHistoryCache.value.get(match.station_id) || []
+    currentStationHistory.value = cached
+    if (cached.length > 0) {
+      // 有缓存数据，先显示缓存
+      updateCharts()
+    }
+    // 然后加载最新数据
     loadTrend().then(() => updateCharts())
+  }
+}
+
+const handleRiskRowClick = (row) => {
+  if (!row?.station_id) return
+  trendDeviceId.value = row.station_id
+  // 切换站点时使用缓存数据
+  const cached = trendHistoryCache.value.get(row.station_id) || []
+  currentStationHistory.value = cached
+  if (cached.length > 0) {
+    // 有缓存数据，先显示缓存
+    updateCharts()
+  }
+  // 然后加载最新数据
+  loadTrend().then(() => updateCharts())
+}
+
+const getRiskRowClass = ({ row }) => {
+  return row?.station_id && row.station_id === trendDeviceId.value ? 'is-selected' : ''
+}
+
+// 自动刷新定时器
+let autoRefreshTimer = null
+
+// 启动自动刷新
+const startAutoRefresh = () => {
+  // 清除现有定时器
+  if (autoRefreshTimer) {
+    clearInterval(autoRefreshTimer)
+  }
+
+  // 每30秒自动刷新一次
+  autoRefreshTimer = setInterval(() => {
+    // 静默刷新，不显示loading
+    loadTrend()
+    updateCharts()
+  }, 30000) // 30秒
+}
+
+// 停止自动刷新
+const stopAutoRefresh = () => {
+  if (autoRefreshTimer) {
+    clearInterval(autoRefreshTimer)
+    autoRefreshTimer = null
   }
 }
 
@@ -521,9 +866,15 @@ onMounted(async () => {
     sensorStore.clearCache()
   }
   await loadData()
+
+  // 启动自动刷新
+  startAutoRefresh()
 })
 
 onUnmounted(() => {
+  // 停止自动刷新
+  stopAutoRefresh()
+
   charts.forEach(chart => chart.dispose())
   if (resizeHandler) {
     window.removeEventListener('resize', resizeHandler)
@@ -535,6 +886,37 @@ onUnmounted(() => {
 :host {
   --primary: #0ea5e9;
   --glass: rgba(255, 255, 255, 0.86);
+}
+
+// 数据更新闪烁动画
+@keyframes dataFlash {
+  0% { opacity: 1; }
+  50% { opacity: 0.6; }
+  100% { opacity: 1; }
+}
+
+// 脉动动画
+@keyframes pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.02); }
+}
+
+// 加载动画
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+// 条形图生长动画
+@keyframes growUp {
+  from { transform: scaleY(0); }
+  to { transform: scaleY(1); }
+}
+
+// 饼图旋转动画
+@keyframes rotateIn {
+  from { transform: rotate(-90deg) scale(0.8); opacity: 0; }
+  to { transform: rotate(0) scale(1); opacity: 1; }
 }
 
 .analysis-container {
@@ -689,6 +1071,14 @@ onUnmounted(() => {
   }
 }
 
+.risk-table :deep(.el-table__row.is-selected) {
+  background: rgba(14, 165, 233, 0.14);
+}
+
+.risk-table :deep(.el-table__row.is-selected:hover) {
+  background: rgba(14, 165, 233, 0.18);
+}
+
 .trend-section {
   display: flex;
   flex-direction: column;
@@ -710,6 +1100,10 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   min-height: 280px;
+
+  .chart-box {
+    animation: rotateIn 0.8s cubic-out;
+  }
 }
 
 .province-chart {
@@ -717,6 +1111,170 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   min-height: 280px;
+
+  .chart-box {
+    animation: growUp 0.6s cubic-out;
+    transform-origin: bottom;
+  }
+}
+
+// 图表容器动画效果
+.chart-box {
+  position: relative;
+  transition: all 0.3s ease;
+
+  &::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: linear-gradient(
+      90deg,
+      transparent,
+      rgba(255, 255, 255, 0.3),
+      transparent
+    );
+    animation: shimmer 2s infinite;
+    pointer-events: none;
+    opacity: 0;
+  }
+
+  &:hover::after {
+    opacity: 1;
+  }
+}
+
+// 标题动画
+.card-title {
+  position: relative;
+  padding-left: 12px;
+
+  &::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 4px;
+    height: 16px;
+    background: linear-gradient(180deg, var(--primary), #14b8a6);
+    border-radius: 2px;
+    animation: pulse 2s ease-in-out infinite;
+  }
+}
+
+// 实时指示器
+.live-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: #22c55e;
+  margin-left: 8px;
+
+  &::before {
+    content: '';
+    width: 8px;
+    height: 8px;
+    background: #22c55e;
+    border-radius: 50%;
+    animation: dataFlash 1.5s ease-in-out infinite;
+  }
+}
+
+// 数据计数器
+.data-count {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  margin-left: 8px;
+  font-size: 11px;
+  color: #64748b;
+  background: rgba(14, 165, 233, 0.08);
+  border-radius: 10px;
+  border: 1px solid rgba(14, 165, 233, 0.2);
+
+  &:hover {
+    background: rgba(14, 165, 233, 0.12);
+  }
+}
+
+// 时间范围标签
+.time-range-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  margin-left: 8px;
+  font-size: 11px;
+  color: #22c55e;
+  background: rgba(34, 197, 94, 0.08);
+  border-radius: 10px;
+  border: 1px solid rgba(34, 197, 94, 0.2);
+
+  .el-icon {
+    font-size: 12px;
+  }
+
+  &:hover {
+    background: rgba(34, 197, 94, 0.12);
+  }
+}
+
+// 卡片操作区域
+.card-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+
+  .load-all-btn {
+    background: linear-gradient(135deg, #0ea5e9, #14b8a6);
+    border: none;
+    border-radius: 8px;
+    font-size: 12px;
+    padding: 6px 14px;
+    transition: all 0.3s ease;
+
+    &:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(14, 165, 233, 0.3);
+    }
+
+    &:active {
+      transform: translateY(0);
+    }
+  }
+
+  .search-input {
+    width: 180px;
+
+    :deep(.el-input__wrapper) {
+      background: rgba(255, 255, 255, 0.9);
+      border-radius: 8px;
+      box-shadow: none;
+      border: 1px solid #e2e8f0;
+    }
+  }
+}
+
+// 标题区域布局
+.title-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+
+  h3 {
+    margin: 0;
+    font-size: 16px;
+    color: #0f172a;
+  }
+
+  .subtitle {
+    font-size: 12px;
+    color: #64748b;
+  }
 }
 
 .glass-card {

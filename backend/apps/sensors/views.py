@@ -10,7 +10,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.utils import timezone
 from datetime import timedelta
-from django.db.models import Q
+from django.db.models import Q, Min, Max
 from django.db.models.functions import Coalesce
 
 from .models import SensorData, SensorSnapshot, StationLocation, Alert
@@ -350,6 +350,7 @@ class SensorDataViewSet(viewsets.ReadOnlyModelViewSet):
         """获取历史数据 - 从数据库历史表中读取"""
         station_id = request.query_params.get('station_id') or request.query_params.get('device_id')
         hours = int(request.query_params.get('hours', 24))
+        limit = int(request.query_params.get('limit', 0))  # 0表示不限制，返回所有数据
 
         time_threshold = timezone.now() - timedelta(hours=hours)
 
@@ -365,6 +366,10 @@ class SensorDataViewSet(viewsets.ReadOnlyModelViewSet):
             if first_record:
                 station_id = first_record.station_id
                 sensor_qs = sensor_qs.filter(station_id=station_id)
+
+        # 应用限制
+        if limit > 0:
+            sensor_qs = sensor_qs[:limit]
 
         history_data = []
         for record in sensor_qs:
@@ -402,6 +407,94 @@ class SensorDataViewSet(viewsets.ReadOnlyModelViewSet):
                 'data_source': data_source,
                 'data': history_data,
                 'count': len(history_data)
+            }
+        })
+
+    @action(detail=False, methods=['get'])
+    def all_history(self, request):
+        """获取站点所有历史数据 - 不受时间限制"""
+        station_id = request.query_params.get('station_id') or request.query_params.get('device_id')
+
+        if not station_id:
+            return Response({
+                'code': 400,
+                'message': '需要提供station_id参数'
+            }, status=400)
+
+        manual_mode = get_data_source_mode() == 'manual'
+        allowed_sources = get_allowed_sources()
+
+        # 获取该站点的所有历史数据，按时间升序排列
+        sensor_qs = SensorData.objects.filter(station_id=station_id).order_by('recorded_at')
+
+        if allowed_sources:
+            sensor_qs = sensor_qs.filter(data_source__in=allowed_sources)
+
+        # 统计信息
+        total_count = sensor_qs.count()
+        if total_count == 0:
+            return Response({
+                'code': 200,
+                'message': 'success',
+                'data': {
+                    'station_id': station_id,
+                    'data_source': 'none',
+                    'data': [],
+                    'count': 0,
+                    'time_range': None
+                }
+            })
+
+        # 获取时间范围
+        time_range = sensor_qs.aggregate(
+            min_time=Min('recorded_at'),
+            max_time=Max('recorded_at')
+        )
+
+        history_data = []
+        for record in sensor_qs:
+            # 根据时间跨度决定时间标签格式
+            time_span = (time_range['max_time'] - time_range['min_time']).total_seconds()
+            if time_span <= 86400:  # 24小时内
+                time_label = record.recorded_at.strftime('%H:%M')
+            elif time_span <= 604800:  # 7天内
+                time_label = record.recorded_at.strftime('%m-%d %H:%M')
+            else:
+                time_label = record.recorded_at.strftime('%m-%d')
+
+            history_data.append({
+                'time': time_label,
+                'timestamp': record.recorded_at.isoformat(),
+                'temperature': float(record.temperature) if record.temperature is not None else None,
+                'ph': float(record.ph) if record.ph is not None else None,
+                'dissolved_oxygen': float(record.dissolved_oxygen) if record.dissolved_oxygen is not None else None,
+                'conductivity': float(record.conductivity) if record.conductivity is not None else None,
+                'turbidity': float(record.turbidity) if record.turbidity is not None else None,
+                'permanganate_index': float(record.permanganate) if record.permanganate is not None else None,
+                'ammonia_nitrogen': float(record.ammonia_nitrogen) if record.ammonia_nitrogen is not None else None,
+                'total_phosphorus': float(record.total_phosphorus) if record.total_phosphorus is not None else None,
+                'total_nitrogen': float(record.total_nitrogen) if record.total_nitrogen is not None else None,
+                'chlorophyll_a': float(record.chlorophyll_a) if record.chlorophyll_a is not None else None,
+                'algae_density': float(record.algae_density) if record.algae_density is not None else None,
+            })
+
+        if manual_mode and history_data:
+            data_source = 'manual'
+        else:
+            data_source = 'database' if history_data else 'none'
+
+        return Response({
+            'code': 200,
+            'message': 'success',
+            'data': {
+                'station_id': station_id,
+                'data_source': data_source,
+                'data': history_data,
+                'count': len(history_data),
+                'time_range': {
+                    'start': time_range['min_time'].isoformat() if time_range['min_time'] else None,
+                    'end': time_range['max_time'].isoformat() if time_range['max_time'] else None
+                }
             }
         })
 

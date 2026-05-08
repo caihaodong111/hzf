@@ -33,7 +33,8 @@
       "Bash(xargs kill:*)",
       "Bash(grep:*)",
       "Bash(find:*)",
-      "Bash(/opt/anaconda3/envs/hzf/bin/python:*)"
+      "Bash(/opt/anaconda3/envs/hzf/bin/python:*)",
+      "Bash(tree:*)"
     ]
   }
 }

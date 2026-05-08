@@ -31,6 +31,20 @@ D:\hzf\
 
 ## 快速开始
 
+## Docker 部署（可选）
+
+1) 在项目根目录执行（确保 `docker-compose.yml`、`backend/`、`frontend/` 都在同一目录下）：
+
+```bash
+docker compose up -d
+```
+
+2) 如果你的 `docker-compose.yml` 配置了 `env_file: ./backend/.env`，请先创建环境变量文件：
+
+```bash
+cp backend/.env.example backend/.env
+```
+
 ### 1. 数据库初始化
 
 连接到MySQL数据库并执行初始化脚本：
@@ -104,6 +118,13 @@ npm run dev
 ```
 GET /api/v1/sensors/data/realtime/
 ```
+
+## Unity 水质监控驾驶舱
+
+仓库内提供了一个 Unity（UI Toolkit）驾驶舱本地包，可直接复用本项目后端 `/api/v1` 数据接口：
+
+- 包入口：`unity/WaterQualityCockpit/package.json`
+- 使用说明：`unity/WaterQualityCockpit/README.md`
 
 ### 历史数据
 ```
