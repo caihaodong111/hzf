@@ -4,6 +4,7 @@ URL configuration for aquaculture project.
 from django.urls import path, include
 from django.conf import settings
 from django.conf.urls.static import static
+from apps.sensors.views import device_ingest_gateway
 
 # API文档配置 (暂时禁用drf_yasg)
 # from rest_framework import permissions
@@ -24,6 +25,8 @@ from django.conf.urls.static import static
 # )
 
 urlpatterns = [
+    path('sensor', device_ingest_gateway, name='sensor-gateway'),
+    path('sensor/', device_ingest_gateway, name='sensor-gateway-slash'),
     # API v1
     path('api/v1/sensors/', include('apps.sensors.urls')),
     path('api/v1/alerts/', include('apps.alerts.urls')),

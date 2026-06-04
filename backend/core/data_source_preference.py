@@ -46,5 +46,5 @@ def get_allowed_sources() -> List[str]:
     mode = get_data_source_mode()
     if mode == DataSourcePreference.MODE_MANUAL:
         return ['huawei', 'manual']
-    # 自动模式：仅展示国家平台数据（不混入华为云快照）
-    return ['national']
+    # 自动模式：展示国家平台数据，同时保留本地设备上报数据
+    return ['national', 'manual']

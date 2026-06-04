@@ -6,7 +6,7 @@ import hashlib
 import logging
 
 from rest_framework import viewsets
-from rest_framework.decorators import action
+from rest_framework.decorators import action, api_view
 from rest_framework.response import Response
 from django.utils import timezone
 from datetime import timedelta
@@ -14,6 +14,7 @@ from django.db.models import Q, Min, Max
 from django.db.models.functions import Coalesce
 
 from .models import SensorData, SensorSnapshot, StationLocation, Alert
+from .realtime_events import broadcast_realtime_event
 from .serializers import (
     SensorDataSerializer, RealtimeDataSerializer,
     HistoricalDataSerializer, AlertSerializer, DashboardSummarySerializer
@@ -54,6 +55,152 @@ def _compute_data_version(sensors):
         hasher.update("|".join(parts).encode("utf-8"))
         hasher.update(b"\n")
     return hasher.hexdigest()
+
+
+def _pick_payload_value(payload, *keys, default=None):
+    for key in keys:
+        value = payload.get(key)
+        if value is None:
+            continue
+        if isinstance(value, str) and not value.strip():
+            continue
+        return value
+    return default
+
+
+def _safe_float(value):
+    if value in (None, ""):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _parse_device_timestamp(payload):
+    raw_value = _pick_payload_value(payload, "timestamp", "recorded_at")
+    if not raw_value:
+        return timezone.now()
+    parsed = DataTransformer._parse_datetime(raw_value)
+    if parsed is None:
+        return timezone.now()
+    if timezone.is_naive(parsed):
+        return timezone.make_aware(parsed)
+    return parsed
+
+
+def _build_device_sensor_payload(payload):
+    station_id = str(_pick_payload_value(payload, "station_id", "device_id", default="stm32-node-001")).strip()
+    if not station_id:
+        station_id = "stm32-node-001"
+
+    station_name = str(
+        _pick_payload_value(payload, "station_name", "device_name", default="STM32水质监测节点")
+    ).strip() or "STM32水质监测节点"
+
+    metadata = {
+        "station_id": station_id,
+        "station_name": station_name,
+        "location": _pick_payload_value(payload, "location"),
+        "province": _pick_payload_value(payload, "province"),
+        "city": _pick_payload_value(payload, "city"),
+        "river_basin": _pick_payload_value(payload, "river_basin"),
+        "longitude": _safe_float(_pick_payload_value(payload, "longitude", "lng")),
+        "latitude": _safe_float(_pick_payload_value(payload, "latitude", "lat")),
+    }
+    metrics = {
+        "temperature": _safe_float(_pick_payload_value(payload, "temperature", "temp")),
+        "ph": _safe_float(_pick_payload_value(payload, "ph")),
+        "dissolved_oxygen": _safe_float(_pick_payload_value(payload, "dissolved_oxygen", "do")),
+        # 设备侧当前上报的是 TDS 通道；这里兼容映射到统一模型中的 conductivity 字段。
+        "conductivity": _safe_float(_pick_payload_value(payload, "conductivity", "ec", "tds")),
+        "turbidity": _safe_float(_pick_payload_value(payload, "turbidity", "turb")),
+        "salinity": _safe_float(_pick_payload_value(payload, "salinity")),
+    }
+
+    return {
+        **metadata,
+        **metrics,
+        "recorded_at": _parse_device_timestamp(payload),
+        "data_source": "manual",
+    }
+
+
+def _store_device_sensor_payload(payload):
+    sensor_payload = _build_device_sensor_payload(payload)
+    SensorData.objects.create(**sensor_payload)
+
+    snapshot, _ = SensorSnapshot.objects.get_or_create(
+        station_id=sensor_payload["station_id"],
+        defaults=sensor_payload,
+    )
+    if snapshot.recorded_at and sensor_payload["recorded_at"] < snapshot.recorded_at:
+        return sensor_payload
+
+    metadata_fields = [
+        "station_name",
+        "location",
+        "province",
+        "city",
+        "river_basin",
+        "longitude",
+        "latitude",
+    ]
+    metric_fields = [
+        "temperature",
+        "ph",
+        "dissolved_oxygen",
+        "conductivity",
+        "turbidity",
+        "salinity",
+    ]
+
+    for field in metadata_fields:
+        value = sensor_payload.get(field)
+        if value not in (None, ""):
+            setattr(snapshot, field, value)
+
+    for field in metric_fields:
+        value = sensor_payload.get(field)
+        if value is not None:
+            setattr(snapshot, field, value)
+
+    snapshot.recorded_at = sensor_payload["recorded_at"]
+    snapshot.data_source = sensor_payload["data_source"]
+    snapshot.save()
+    return sensor_payload
+
+
+@api_view(["GET", "POST"])
+def device_ingest_gateway(request):
+    """兼容当前 STM32 HTTP 上报的设备入库接口。"""
+    payload = request.query_params if request.method == "GET" else (request.data or {})
+    stored_payload = _store_device_sensor_payload(payload)
+
+    broadcast_realtime_event(
+        {
+            "reason": "device_ingest",
+            "source": stored_payload.get("data_source"),
+            "station_id": stored_payload.get("station_id"),
+        }
+    )
+    logger.info(
+        "device_ingest stored: station_id=%s recorded_at=%s",
+        stored_payload.get("station_id"),
+        stored_payload.get("recorded_at"),
+    )
+    return Response(
+        {
+            "code": 200,
+            "message": "success",
+            "data": {
+                "station_id": stored_payload.get("station_id"),
+                "station_name": stored_payload.get("station_name"),
+                "recorded_at": stored_payload.get("recorded_at").isoformat(),
+                "data_source": stored_payload.get("data_source"),
+            },
+        }
+    )
 
 
 class SensorDataViewSet(viewsets.ReadOnlyModelViewSet):
@@ -338,6 +485,14 @@ class SensorDataViewSet(viewsets.ReadOnlyModelViewSet):
             result.get("source"),
             result.get("created"),
             result.get("updated"),
+        )
+        broadcast_realtime_event(
+            {
+                "reason": "sync_realtime",
+                "source": result.get("source"),
+                "created": result.get("created", 0),
+                "updated": result.get("updated", 0),
+            }
         )
         return Response({
             'code': 200,

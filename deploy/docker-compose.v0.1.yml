@@ -1,0 +1,90 @@
+services:
+  redis:
+    image: zjjz-redis:v0.1
+    container_name: zjjz-redis-v0.1
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    expose:
+      - "6379"
+    volumes:
+      - zjjz-redis-data-v0.1:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - zjjz-v0.1
+
+  backend:
+    image: zjjz-backend:v0.1
+    container_name: zjjz-backend-v0.1
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+    env_file:
+      - ./backend.v0.1.env
+    expose:
+      - "8000"
+    volumes:
+      - zjjz-backend-logs-v0.1:/app/logs
+      - zjjz-backend-media-v0.1:/app/media
+    networks:
+      - zjjz-v0.1
+
+  worker:
+    image: zjjz-backend:v0.1
+    container_name: zjjz-worker-v0.1
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+    env_file:
+      - ./backend.v0.1.env
+    command: ["celery", "-A", "aquaculture", "worker", "-l", "info"]
+    volumes:
+      - zjjz-backend-logs-v0.1:/app/logs
+      - zjjz-backend-media-v0.1:/app/media
+    networks:
+      - zjjz-v0.1
+
+  beat:
+    image: zjjz-backend:v0.1
+    container_name: zjjz-beat-v0.1
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+    env_file:
+      - ./backend.v0.1.env
+    command: ["celery", "-A", "aquaculture", "beat", "-l", "info", "--schedule", "/var/lib/celery/celerybeat-schedule"]
+    volumes:
+      - zjjz-backend-logs-v0.1:/app/logs
+      - zjjz-backend-media-v0.1:/app/media
+      - zjjz-celery-beat-data-v0.1:/var/lib/celery
+    networks:
+      - zjjz-v0.1
+
+  frontend:
+    image: zjjz-frontend:v0.1
+    container_name: zjjz-frontend-v0.1
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_started
+    ports:
+      - "80:80"
+    networks:
+      - zjjz-v0.1
+
+networks:
+  zjjz-v0.1:
+    name: zjjz-v0.1-net
+
+volumes:
+  zjjz-redis-data-v0.1:
+  zjjz-backend-logs-v0.1:
+  zjjz-backend-media-v0.1:
+  zjjz-celery-beat-data-v0.1:

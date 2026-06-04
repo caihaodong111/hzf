@@ -208,7 +208,7 @@ int main(void)
             ((app_ms - last_upload_ms) >= UPLOAD_PERIOD_MS))
         {
             last_upload_ms = app_ms;
-            if (ESP01_ReportSensorsHttpGet(PH_temp, turbidity_temp, temperature_temp, TDS_DAT) == 0U)
+            if (ESP01_ReportSensorsUpstream(PH_temp, turbidity_temp, temperature_temp, TDS_DAT) == 0U)
             {
                 wifi_ready = 0U;
             }

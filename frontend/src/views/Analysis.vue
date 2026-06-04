@@ -146,6 +146,7 @@ import * as echarts from 'echarts'
 import { getDashboardOverview, getRealtimeData, getHistoricalData, getAllHistoricalData } from '@/api/sensors'
 import { getDataSourceSettings } from '@/api/settings'
 import sensorStore from '@/stores/sensorStore'
+import { createRealtimeSocket } from '@/utils/realtimeSocket'
 import { Refresh, Search, Download, Clock } from '@element-plus/icons-vue'
 
 const timeRange = ref(24)
@@ -244,6 +245,8 @@ const provinceChartRef = ref(null)
 const trendChartRef = ref(null)
 let charts = []
 let resizeHandler = null
+let realtimeSocket = null
+let realtimeRefreshTimer = null
 
 const initCharts = async () => {
   await nextTick()
@@ -836,6 +839,16 @@ const getRiskRowClass = ({ row }) => {
 // 自动刷新定时器
 let autoRefreshTimer = null
 
+const scheduleRealtimeRefresh = () => {
+  if (realtimeRefreshTimer) {
+    clearTimeout(realtimeRefreshTimer)
+  }
+  realtimeRefreshTimer = setTimeout(() => {
+    realtimeRefreshTimer = null
+    loadData()
+  }, 250)
+}
+
 // 启动自动刷新
 const startAutoRefresh = () => {
   // 清除现有定时器
@@ -867,11 +880,24 @@ onMounted(async () => {
   }
   await loadData()
 
+  realtimeSocket = createRealtimeSocket({
+    onMessage: (message) => {
+      if (!message || message.event !== 'realtime.snapshot.updated') return
+      scheduleRealtimeRefresh()
+    }
+  })
+  realtimeSocket.connect()
+
   // 启动自动刷新
   startAutoRefresh()
 })
 
 onUnmounted(() => {
+  if (realtimeRefreshTimer) {
+    clearTimeout(realtimeRefreshTimer)
+    realtimeRefreshTimer = null
+  }
+  realtimeSocket?.close()
   // 停止自动刷新
   stopAutoRefresh()
 

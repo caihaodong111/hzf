@@ -1,110 +1,206 @@
 <template>
-  <div class="ai-page">
-    <div class="ai-bg"></div>
-
-    <div class="ai-content">
-      <header class="ai-header">
-        <div>
-          <h1>AI 智能分析</h1>
-          <p>基于最新水质快照输出风险研判与建议</p>
-        </div>
-        <div class="header-actions">
-          <div class="update-tag" v-if="overviewTimestamp">
-            <span class="dot" :class="{ active: !loadingOverview }"></span>
-            <span>更新于 {{ overviewTimestamp }}</span>
+  <div class="chatgpt-page">
+    <div class="chatgpt-shell">
+      <aside class="workspace-sidebar">
+        <div class="sidebar-head">
+          <div class="brand-pill">
+            <span class="brand-dot"></span>
+            <span>AI 智能分析</span>
           </div>
-          <button class="refresh-btn" type="button" @click="loadOverview" :disabled="loadingOverview">
-            <span class="icon">↻</span> {{ loadingOverview ? '更新中' : '刷新' }}
+
+          <button class="new-chat-btn" type="button" @click="startNewChat">
+            <span class="plus">+</span>
+            <span>新对话</span>
+          </button>
+
+          <button class="refresh-side-btn" type="button" @click="loadOverview" :disabled="loadingOverview">
+            {{ loadingOverview ? '同步中...' : '刷新快照' }}
           </button>
         </div>
-      </header>
 
-      <main class="ai-main">
-      <aside class="side-panel">
-        <div class="stat-group">
-          <div class="stat-card" v-for="(val, label) in summaryMap" :key="label">
-            <span class="label">{{ label }}</span>
-            <span class="value">{{ val }}</span>
-          </div>
+        <div class="sidebar-scroll">
+          <section class="sidebar-section">
+            <div class="section-label">本次会话</div>
+
+            <button
+              v-if="sessionQuestions.length === 0"
+              class="thread-item placeholder"
+              type="button"
+              @click="focusComposer"
+            >
+              从下方输入框开始提问
+            </button>
+
+            <button
+              v-for="item in sessionQuestions"
+              :key="item.key"
+              class="thread-item"
+              type="button"
+              @click="applyPrompt(item.full)"
+            >
+              {{ item.label }}
+            </button>
+          </section>
+
+          <section class="sidebar-section">
+            <div class="section-label">快捷问题</div>
+
+            <button
+              v-for="item in quickPrompts.slice(0, 4)"
+              :key="item"
+              class="thread-item soft"
+              type="button"
+              @click="applyPrompt(item)"
+            >
+              {{ item }}
+            </button>
+          </section>
         </div>
 
-        <div class="side-tip">
-          提示：选择下方推荐问题可一键提问。
+        <div class="snapshot-card">
+          <div class="snapshot-header">
+            <span class="snapshot-title">最新水质快照</span>
+            <span class="snapshot-source">{{ dataSourceLabel }}</span>
+          </div>
+
+          <div class="snapshot-time">{{ overviewTimestampLabel || '尚未同步快照' }}</div>
+
+          <div class="snapshot-metrics">
+            <div v-for="item in sidebarMetrics" :key="item.label" class="metric-row">
+              <span>{{ item.label }}</span>
+              <strong>{{ item.value }}</strong>
+            </div>
+          </div>
         </div>
       </aside>
 
-      <section class="chat-section">
-        <div class="chat-header">
-          <h2>对话研判</h2>
-          <button class="clear-btn" @click="clearChat" v-if="messages.length > 0">清空</button>
-        </div>
+      <section class="chat-stage">
+        <header class="stage-header">
+          <div class="header-main">
+            <div class="app-badge">AI 智能分析</div>
+            <h1>水质风险研判助手</h1>
+            <p>{{ headerDescription }}</p>
+          </div>
 
-        <div class="chat-viewport" ref="chatBodyRef">
-          <div v-if="messages.length === 0" class="welcome-view">
-            <div class="ai-avatar">AI</div>
-            <h3>您好，我是水质分析助手</h3>
-            <p>您可以询问关于水质异常、断面风险或周报建议等问题。</p>
+          <div class="header-status">
+            <span class="status-pill" :class="{ loading: loadingOverview }">
+              <span class="status-dot"></span>
+              <span>{{ statusLine }}</span>
+            </span>
+
+            <button v-if="hasMessages" class="link-btn" type="button" @click="startNewChat">
+              清空对话
+            </button>
+          </div>
+        </header>
+
+        <main class="conversation-body" ref="chatBodyRef">
+          <section v-if="!hasMessages" class="welcome-panel">
+            <h2>今天想分析什么？</h2>
+            <p>{{ welcomeCaption }}</p>
+
+            <div class="hero-stats">
+              <div v-for="item in heroStats" :key="item.label" class="hero-stat">
+                <span>{{ item.label }}</span>
+                <strong>{{ item.value }}</strong>
+              </div>
+            </div>
 
             <div class="suggestion-grid">
               <button
                 v-for="item in quickPrompts"
                 :key="item"
+                class="suggestion-card"
+                type="button"
                 @click="applyPrompt(item)"
-                class="suggest-item"
+              >
+                <span class="suggestion-title">{{ item }}</span>
+                <span class="suggestion-meta">基于最新快照生成分析</span>
+              </button>
+            </div>
+          </section>
+
+          <section v-else class="message-stream">
+            <div class="context-bar">
+              <span v-for="item in contextBadges" :key="item" class="context-chip">
+                {{ item }}
+              </span>
+            </div>
+
+            <div v-for="(msg, idx) in messages" :key="idx" :class="['message-row', msg.role]">
+              <div class="message-avatar">
+                {{ msg.role === 'assistant' ? 'AI' : '你' }}
+              </div>
+
+              <div class="message-column">
+                <div class="message-role">
+                  {{ msg.role === 'assistant' ? '水质风险研判助手' : '你' }}
+                </div>
+
+                <div class="message-bubble" :class="{ streaming: msg.streaming }">
+                  <div class="message-content">
+                    {{ msg.streaming && !msg.content ? '正在分析...' : msg.content }}
+                  </div>
+                  <div class="message-time" v-if="msg.time">{{ msg.time }}</div>
+                </div>
+              </div>
+            </div>
+
+            <div v-if="loading && !hasStreamingMessage" class="message-row assistant">
+              <div class="message-avatar">AI</div>
+
+              <div class="message-column">
+                <div class="message-role">水质风险研判助手</div>
+
+                <div class="loading-shell">
+                  <div class="typing-dots">
+                    <span></span><span></span><span></span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+        </main>
+
+        <footer class="composer-panel">
+          <div class="composer">
+            <textarea
+              v-model="question"
+              ref="inputRef"
+              rows="1"
+              placeholder="给水质快照下指令，例如：输出高风险断面和处置建议"
+              @input="syncTextareaHeight"
+              @keydown.enter.exact.prevent="handleSendClick"
+            ></textarea>
+
+            <div class="composer-bottom">
+              <div class="composer-tags">
+                <span v-for="item in composerTags" :key="item" class="composer-tag">
+                  {{ item }}
+                </span>
+              </div>
+
+              <button
+                class="send-btn"
+                :class="{ cancel: loading }"
+                :disabled="!question.trim() && !loading"
+                :title="loading ? '取消' : '发送'"
+                @click="handleSendClick"
                 type="button"
               >
-                {{ item }}
+                <svg v-if="!loading" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z" />
+                </svg>
+                <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M18 6L6 18M6 6l12 12" />
+                </svg>
               </button>
             </div>
           </div>
 
-          <div v-else class="message-list">
-            <div v-for="(msg, idx) in messages" :key="idx" :class="['msg-wrapper', msg.role]">
-              <div class="msg-bubble">
-                <div class="msg-content">{{ msg.content }}</div>
-                <div class="msg-time" v-if="msg.time">{{ msg.time }}</div>
-              </div>
-            </div>
-
-            <div v-if="loading" class="msg-wrapper assistant">
-              <div class="msg-bubble loading-bubble">
-                <div class="typing-dots">
-                  <span></span><span></span><span></span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <footer class="input-area">
-          <div class="input-wrapper">
-            <textarea
-              v-model="question"
-              placeholder="输入水质分析相关问题..."
-              @keydown.enter.exact.prevent="handleSendClick"
-              rows="1"
-              ref="inputRef"
-            ></textarea>
-            <button
-              class="send-btn"
-              :class="{ cancel: loading }"
-              :disabled="!question.trim() && !loading"
-              :title="loading ? '取消' : '发送'"
-              @click="handleSendClick"
-              type="button"
-            >
-              <svg v-if="!loading" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z" />
-              </svg>
-              <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M18 6L6 18M6 6l12 12" />
-              </svg>
-            </button>
-          </div>
-          <p class="input-tip">Shift + Enter 换行</p>
+          <p class="composer-note">AI 仅基于最新快照提供辅助判断，不替代人工决策。</p>
         </footer>
       </section>
-    </main>
     </div>
   </div>
 </template>
@@ -123,28 +219,157 @@ const messages = aiAssistantStore.messages
 const chatBodyRef = ref(null)
 const inputRef = ref(null)
 
+const SOURCE_LABELS = {
+  national: '国家水质',
+  huawei: '华为云',
+  database: '数据库',
+  manual: '手动入库',
+  auto: '自动模式',
+  none: '暂无快照'
+}
+
 const quickPrompts = [
-  '分析当前水质风险点与增氧建议',
+  '输出当前水质风险研判结论',
   '哪些断面需要优先处理？',
-  '生成今日水质运行日报',
-  '判断是否存在富营养化风险'
+  '生成今日水质运行简报',
+  '判断是否存在富营养化风险',
+  '给出夜间增氧建议',
+  '解释当前 pH 异常点'
 ]
 
-const summaryMap = computed(() => ({
-  监测断面: overview.value?.summary?.total_devices || 0,
-  未恢复告警: overview.value?.summary?.alert_count || 0
-}))
+const summary = computed(() => overview.value?.summary || {})
+const hasMessages = computed(() => messages.value.length > 0)
+const hasStreamingMessage = computed(() => messages.value.some((msg) => msg?.streaming))
+const dataSourceLabel = computed(() => SOURCE_LABELS[overview.value?.data_source] || '最新快照')
 
-const overviewTimestamp = computed(() => overview.value?.timestamp || '')
+const formatNumber = (value, digits = 0, suffix = '') => {
+  const num = Number(value)
+  if (!Number.isFinite(num)) return '-'
+  return `${num.toFixed(digits)}${suffix}`
+}
+
+const formatTimestamp = (value) => {
+  if (!value) return ''
+  try {
+    return new Date(value).toLocaleString('zh-CN', {
+      hour12: false,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit'
+    })
+  } catch (error) {
+    return String(value)
+  }
+}
+
+const truncate = (value, max = 28) => {
+  const text = String(value || '').trim()
+  if (!text) return '新的分析对话'
+  if (text.length <= max) return text
+  return `${text.slice(0, max - 3)}...`
+}
+
+const overviewTimestampLabel = computed(() => formatTimestamp(overview.value?.timestamp))
+
+const sessionQuestions = computed(() => {
+  return messages.value
+    .filter((msg) => msg.role === 'user')
+    .map((msg, index) => ({
+      key: `${index}-${msg.time || ''}`,
+      label: truncate(msg.content),
+      full: msg.content || ''
+    }))
+    .reverse()
+    .slice(0, 8)
+})
+
+const sidebarMetrics = computed(() => ([
+  { label: '监测断面', value: `${summary.value.total_devices ?? 0} 个` },
+  { label: '关注信号', value: `${summary.value.alert_count ?? 0} 项` },
+  { label: '平均 DO', value: formatNumber(summary.value.avg_dissolved_oxygen, 2, ' mg/L') },
+  { label: '平均 pH', value: formatNumber(summary.value.avg_ph, 2) }
+]))
+
+const heroStats = computed(() => ([
+  { label: '监测断面', value: `${summary.value.total_devices ?? 0}` },
+  { label: '在线断面', value: `${summary.value.online_devices ?? 0}` },
+  { label: '关注信号', value: `${summary.value.alert_count ?? 0}` },
+  { label: '平均 DO', value: formatNumber(summary.value.avg_dissolved_oxygen, 2) }
+]))
+
+const composerTags = computed(() => {
+  const tags = [dataSourceLabel.value]
+  if (overviewTimestampLabel.value) {
+    tags.push(`快照 ${overviewTimestampLabel.value}`)
+  }
+  tags.push(`断面 ${summary.value.total_devices ?? 0}`)
+  tags.push(`预警 ${summary.value.alert_count ?? 0}`)
+  return tags
+})
+
+const contextBadges = computed(() => {
+  const tags = [`数据源 ${dataSourceLabel.value}`]
+  if (overviewTimestampLabel.value) {
+    tags.push(`快照 ${overviewTimestampLabel.value}`)
+  }
+  tags.push(`断面 ${summary.value.total_devices ?? 0} 个`)
+  tags.push(`预警 ${summary.value.alert_count ?? 0} 项`)
+  return tags
+})
+
+const statusLine = computed(() => {
+  if (loadingOverview.value) return '正在同步最新水质快照'
+  if (overviewTimestampLabel.value) return `快照更新于 ${overviewTimestampLabel.value}`
+  return '刷新后获取最新水质快照'
+})
+
+const headerDescription = computed(() => {
+  if (overviewTimestampLabel.value) {
+    return `基于 ${overviewTimestampLabel.value} 的最新水质快照输出风险解释和处置建议。`
+  }
+  return '基于最新水质快照输出风险解释和处置建议。'
+})
+
+const welcomeCaption = computed(() => {
+  const total = summary.value.total_devices ?? 0
+  const alerts = summary.value.alert_count ?? 0
+
+  if (loadingOverview.value) {
+    return '正在同步快照，完成后即可基于当前断面状态发起对话。'
+  }
+  if (total <= 0) {
+    return '当前暂无可用快照，刷新数据后可生成风险结论、简报和处置建议。'
+  }
+  if (alerts > 0) {
+    return `当前快照覆盖 ${total} 个断面，已识别 ${alerts} 个需重点关注的风险信号。`
+  }
+  return `当前快照覆盖 ${total} 个断面，可继续追问风险排序、日报摘要或处置建议。`
+})
+
+const syncTextareaHeight = () => {
+  const el = inputRef.value
+  if (!el) return
+  el.style.height = '0px'
+  const nextHeight = Math.min(Math.max(el.scrollHeight, 56), 180)
+  el.style.height = `${nextHeight}px`
+}
+
+const focusComposer = async () => {
+  await nextTick()
+  syncTextareaHeight()
+  inputRef.value?.focus?.()
+}
 
 const scrollToBottom = async () => {
   await nextTick()
-  if (chatBodyRef.value) {
-    chatBodyRef.value.scrollTo({
-      top: chatBodyRef.value.scrollHeight,
-      behavior: 'smooth'
-    })
-  }
+  if (!chatBodyRef.value) return
+
+  chatBodyRef.value.scrollTo({
+    top: chatBodyRef.value.scrollHeight,
+    behavior: 'smooth'
+  })
 }
 
 const loadOverview = async () => {
@@ -160,13 +385,18 @@ const loadOverview = async () => {
   }
 }
 
-const applyPrompt = (text) => {
+const applyPrompt = async (text) => {
   aiAssistantStore.setDraft(text)
-  inputRef.value?.focus?.()
+  await focusComposer()
 }
 
-const clearChat = () => {
+const startNewChat = async () => {
+  if (loading.value) {
+    aiAssistantStore.cancel()
+  }
   aiAssistantStore.clearChat()
+  aiAssistantStore.setDraft('')
+  await focusComposer()
 }
 
 const handleSendClick = () => {
@@ -188,367 +418,660 @@ const askAi = async () => {
       data_source: overview.value?.data_source,
       timestamp: overview.value?.timestamp
     }
-    await aiAssistantStore.ask({ question: trimmed, context, model: 'glm-4.7' })
+    await aiAssistantStore.ask({ question: trimmed, context, model: 'deepseek-ai/DeepSeek-V4-Pro' })
   } catch (error) {
     // store 内部已处理展示
   } finally {
     await scrollToBottom()
+    await nextTick()
+    syncTextareaHeight()
   }
 }
 
+watch(question, async () => {
+  await nextTick()
+  syncTextareaHeight()
+})
+
 watch(
-  () => messages.value.length,
+  () => messages.value.map((msg) => `${msg.role}:${msg.content?.length || 0}:${msg.streaming ? 1 : 0}`).join('|'),
   async () => {
     await scrollToBottom()
   }
 )
 
-onMounted(() => {
+onMounted(async () => {
   aiAssistantStore.loadFromStorage()
-  loadOverview()
-  scrollToBottom()
+  await loadOverview()
+  await nextTick()
+  syncTextareaHeight()
+  await scrollToBottom()
 })
 </script>
 
 <style scoped lang="scss">
-.ai-page {
-  min-height: 100vh;
-  position: relative;
-  padding: 32px 36px 48px;
+.chatgpt-page {
+  height: 100vh;
+  padding: 20px;
   overflow: hidden;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: linear-gradient(180deg, #f4f4f5 0%, #ececf1 100%);
 }
 
-.ai-bg {
-  position: absolute;
-  inset: 0;
-  background: radial-gradient(circle at 20% 20%, rgba(52, 211, 153, 0.18), transparent 45%),
-    radial-gradient(circle at 80% 10%, rgba(94, 234, 212, 0.16), transparent 40%),
-    radial-gradient(circle at 20% 80%, rgba(59, 130, 246, 0.1), transparent 45%),
-    linear-gradient(120deg, #f7f9fc 0%, #eef5fb 45%, #f8fafc 100%);
-  pointer-events: none;
+.chatgpt-shell {
+  height: calc(100vh - 40px);
+  max-height: calc(100vh - 40px);
+  display: flex;
+  background: #ffffff;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 26px;
+  overflow: hidden;
+  box-shadow: 0 24px 48px rgba(15, 23, 42, 0.08);
 }
 
-.ai-content {
-  position: relative;
-  z-index: 1;
+.workspace-sidebar {
+  width: 280px;
+  flex-shrink: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 16px;
+  padding: 14px 12px;
+  background: #f7f7f8;
+  border-right: 1px solid #ececf0;
 }
 
-.ai-header {
+.sidebar-head {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-
-  h1 {
-    margin: 0;
-    font-size: 28px;
-    font-weight: 700;
-    color: #0f172a;
-  }
-
-  p {
-    margin: 6px 0 0;
-    color: #64748b;
-    font-size: 14px;
-  }
+  flex-direction: column;
+  gap: 10px;
 }
 
-.header-actions {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.update-tag {
-  display: flex;
+.brand-pill {
+  display: inline-flex;
   align-items: center;
   gap: 10px;
-  padding: 10px 14px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: #ffffff;
+  border: 1px solid #ececf0;
+  color: #111827;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.brand-dot {
+  width: 10px;
+  height: 10px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.65);
-  border: 1px solid rgba(255, 255, 255, 0.6);
-  color: #334155;
-  font-size: 12px;
+  background: #111827;
 }
 
-.dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 999px;
-  background: rgba(148, 163, 184, 0.8);
-}
-
-.dot.active {
-  background: rgba(34, 197, 94, 0.9);
-}
-
-.ai-main {
-  width: 100%;
-  max-width: 1200px;
-  margin: 0 auto;
-  height: calc(100vh - 220px);
-  min-height: 640px;
-  display: flex;
-  background: rgba(255, 255, 255, 0.7);
-  backdrop-filter: blur(20px);
-  border: 1px solid rgba(255, 255, 255, 0.5);
-  border-radius: 24px;
-  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.05);
-  z-index: 1;
-}
-
-/* 左侧面板 */
-.side-panel {
-  width: 280px;
-  border-right: 1px solid rgba(0, 0, 0, 0.05);
-  padding: 32px 24px;
-  display: flex;
-  flex-direction: column;
-}
-
-.stat-card {
-  background: white;
-  padding: 16px;
-  border-radius: 16px;
-  margin-bottom: 12px;
-  border: 1px solid rgba(0, 0, 0, 0.03);
-
-  .label {
-    font-size: 12px;
-    color: #64748b;
-    display: block;
-    margin-bottom: 4px;
-  }
-
-  .value {
-    font-size: 20px;
-    font-weight: 700;
-    color: #0f172a;
-  }
-}
-
-.side-tip {
-  margin-top: auto;
-  font-size: 12px;
-  color: #64748b;
-  line-height: 1.5;
-}
-
-.refresh-btn {
-  padding: 10px 14px;
-  border-radius: 12px;
-  border: 1px solid #e2e8f0;
-  background: rgba(255, 255, 255, 0.82);
+.new-chat-btn,
+.refresh-side-btn,
+.thread-item,
+.suggestion-card,
+.link-btn {
+  border: none;
+  background: none;
   cursor: pointer;
-  transition: all 0.2s;
+  font: inherit;
+}
+
+.new-chat-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  justify-content: center;
+  min-height: 42px;
+  border-radius: 14px;
+  background: #111827;
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 600;
+  transition: opacity 0.2s ease, transform 0.2s ease;
 
   &:hover {
-    background: #f1f5f9;
+    opacity: 0.94;
+    transform: translateY(-1px);
   }
 }
 
-/* 右侧对话区 */
-.chat-section {
+.plus {
+  font-size: 18px;
+  line-height: 1;
+}
+
+.refresh-side-btn {
+  min-height: 38px;
+  border-radius: 12px;
+  background: #ffffff;
+  border: 1px solid #ececf0;
+  color: #4b5563;
+  font-size: 13px;
+  transition: background 0.2s ease, color 0.2s ease;
+
+  &:hover:not(:disabled) {
+    background: #f0f0f2;
+    color: #111827;
+  }
+
+  &:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+}
+
+.sidebar-scroll {
   flex: 1;
+  min-height: 0;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
-  position: relative;
-  background: rgba(255, 255, 255, 0.3);
-}
-
-.chat-header {
-  padding: 20px 32px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-
-  h2 {
-    font-size: 16px;
-    margin: 0;
-    color: #334155;
-  }
-
-  .clear-btn {
-    font-size: 13px;
-    color: #94a3b8;
-    border: none;
-    background: none;
-    cursor: pointer;
-  }
-}
-
-.chat-viewport {
-  flex: 1;
-  overflow-y: auto;
-  padding: 0 32px;
+  gap: 16px;
 
   &::-webkit-scrollbar {
-    width: 4px;
+    width: 6px;
   }
 
   &::-webkit-scrollbar-thumb {
-    background: #e2e8f0;
-    border-radius: 10px;
+    background: rgba(156, 163, 175, 0.36);
+    border-radius: 999px;
   }
 }
 
-/* 欢迎页 */
-.welcome-view {
-  height: 100%;
+.sidebar-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.section-label {
+  padding: 0 6px;
+  color: #8e8ea0;
+  font-size: 12px;
+}
+
+.thread-item {
+  width: 100%;
+  padding: 11px 12px;
+  text-align: left;
+  border-radius: 12px;
+  color: #374151;
+  font-size: 13px;
+  line-height: 1.45;
+  transition: background 0.2s ease, color 0.2s ease;
+
+  &:hover {
+    background: #ececf1;
+    color: #111827;
+  }
+}
+
+.thread-item.soft {
+  background: #ffffff;
+  border: 1px solid #ececf0;
+}
+
+.thread-item.placeholder {
+  color: #6b7280;
+}
+
+.snapshot-card {
+  padding: 14px;
+  border-radius: 16px;
+  background: #ffffff;
+  border: 1px solid #ececf0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.snapshot-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.snapshot-title {
+  color: #111827;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.snapshot-source {
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: #f4f4f5;
+  color: #6b7280;
+  font-size: 11px;
+}
+
+.snapshot-time {
+  color: #8e8ea0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.snapshot-metrics {
+  display: grid;
+  gap: 8px;
+}
+
+.metric-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #6b7280;
+  font-size: 12px;
+
+  strong {
+    color: #111827;
+    font-size: 13px;
+  }
+}
+
+.chat-stage {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: #ffffff;
+}
+
+.stage-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 22px 32px 14px;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.header-main {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+
+  h1 {
+    margin: 0;
+    color: #111827;
+    font-size: 26px;
+    line-height: 1.2;
+    font-weight: 700;
+  }
+
+  p {
+    margin: 0;
+    color: #6b7280;
+    font-size: 14px;
+    line-height: 1.6;
+  }
+}
+
+.app-badge {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: #f4f4f5;
+  color: #4b5563;
+  font-size: 12px;
+}
+
+.header-status {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 36px;
+  padding: 0 14px;
+  border-radius: 999px;
+  background: #f7f7f8;
+  border: 1px solid #ececf0;
+  color: #4b5563;
+  font-size: 12px;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #22c55e;
+  box-shadow: 0 0 0 5px rgba(34, 197, 94, 0.12);
+}
+
+.status-pill.loading .status-dot {
+  animation: pulse 1.4s ease-in-out infinite;
+}
+
+.link-btn {
+  color: #6b7280;
+  font-size: 13px;
+  transition: color 0.2s ease;
+
+  &:hover {
+    color: #111827;
+  }
+}
+
+.conversation-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 28px 32px;
+
+  &::-webkit-scrollbar {
+    width: 8px;
+  }
+
+  &::-webkit-scrollbar-thumb {
+    background: rgba(156, 163, 175, 0.32);
+    border-radius: 999px;
+  }
+}
+
+.welcome-panel {
+  min-height: 100%;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   text-align: center;
 
-  .ai-avatar {
-    width: 64px;
-    height: 64px;
-    background: #eff6ff;
-    color: #3b82f6;
-    border-radius: 20px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 24px;
-    font-weight: 800;
-    margin-bottom: 24px;
-  }
-
-  h3 {
-    font-size: 24px;
-    color: #1e293b;
-    margin-bottom: 8px;
+  h2 {
+    margin: 0;
+    color: #111827;
+    font-size: clamp(32px, 5vw, 42px);
+    line-height: 1.15;
+    letter-spacing: -0.03em;
   }
 
   p {
-    color: #64748b;
-    margin-bottom: 32px;
+    margin: 14px 0 0;
+    max-width: 720px;
+    color: #6b7280;
+    font-size: 16px;
+    line-height: 1.75;
+  }
+}
+
+.hero-stats {
+  margin-top: 26px;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  width: min(760px, 100%);
+}
+
+.hero-stat {
+  padding: 16px;
+  border-radius: 16px;
+  background: #f7f7f8;
+  border: 1px solid #ececf0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+
+  span {
+    color: #8e8ea0;
+    font-size: 12px;
+  }
+
+  strong {
+    color: #111827;
+    font-size: 22px;
+    font-weight: 700;
   }
 }
 
 .suggestion-grid {
+  margin-top: 30px;
+  width: min(800px, 100%);
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
-  max-width: 500px;
 }
 
-.suggest-item {
-  padding: 14px;
-  background: white;
-  border: 1px solid #e2e8f0;
-  border-radius: 12px;
-  font-size: 13px;
-  color: #475569;
-  cursor: pointer;
+.suggestion-card {
+  padding: 16px;
+  border-radius: 18px;
+  background: #f7f7f8;
+  border: 1px solid #ececf0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
   text-align: left;
-  transition: all 0.2s;
+  transition: background 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
 
   &:hover {
-    border-color: #3b82f6;
-    background: #eff6ff;
-    color: #2563eb;
+    background: #ffffff;
+    border-color: #d8d8dd;
+    transform: translateY(-1px);
   }
 }
 
-/* 消息气泡 */
-.msg-wrapper {
+.suggestion-title {
+  color: #111827;
+  font-size: 15px;
+  line-height: 1.5;
+  font-weight: 600;
+}
+
+.suggestion-meta {
+  color: #8e8ea0;
+  font-size: 12px;
+}
+
+.message-stream {
+  width: min(860px, 100%);
+  margin: 0 auto;
   display: flex;
-  margin-bottom: 24px;
-
-  &.user {
-    justify-content: flex-end;
-  }
+  flex-direction: column;
+  gap: 26px;
 }
 
-.msg-bubble {
-  max-width: 80%;
-  padding: 14px 18px;
+.context-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.context-chip {
+  padding: 7px 12px;
+  border-radius: 999px;
+  background: #f7f7f8;
+  border: 1px solid #ececf0;
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.message-row {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.message-row.user {
+  justify-content: flex-end;
+}
+
+.message-row.user .message-avatar {
+  order: 2;
+  background: #111827;
+  color: #ffffff;
+}
+
+.message-row.user .message-column {
+  align-items: flex-end;
+}
+
+.message-row.assistant .message-bubble {
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.message-avatar {
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  border-radius: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #f4f4f5;
+  color: #111827;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.message-column {
+  max-width: min(760px, calc(100% - 44px));
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.message-role {
+  color: #8e8ea0;
+  font-size: 12px;
+}
+
+.message-bubble {
+  padding: 14px 16px;
   border-radius: 18px;
-  position: relative;
-  line-height: 1.6;
-  font-size: 14px;
+  background: #f7f7f8;
+  border: 1px solid #ececf0;
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.04);
 }
 
-.msg-content {
+.message-row.assistant .message-content {
+  color: #1f2937;
+  font-size: 15px;
+  line-height: 1.8;
+}
+
+.message-row.user .message-content {
+  color: #111827;
+  font-size: 15px;
+  line-height: 1.68;
+}
+
+.message-content {
   white-space: pre-wrap;
   word-break: break-word;
 }
 
-.user .msg-bubble {
-  background: #3b82f6;
-  color: white;
-  border-bottom-right-radius: 4px;
+.message-time {
+  margin-top: 10px;
+  color: #9ca3af;
+  font-size: 11px;
 }
 
-.assistant .msg-bubble {
-  background: white;
-  color: #1e293b;
-  border-bottom-left-radius: 4px;
-  box-shadow: 0 2px 15px rgba(0, 0, 0, 0.03);
+.loading-shell {
+  min-width: 94px;
+  padding: 12px 14px;
+  border-radius: 18px;
+  background: #f7f7f8;
+  border: 1px solid #ececf0;
 }
 
-.msg-time {
-  font-size: 10px;
-  opacity: 0.6;
-  margin-top: 6px;
+.composer-panel {
+  position: sticky;
+  bottom: 0;
+  z-index: 4;
+  flex-shrink: 0;
+  padding: 18px 24px 24px;
+  border-top: 1px solid #f0f0f0;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.84) 0%, #ffffff 38%);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
 }
 
-/* 输入框 */
-.input-area {
-  padding: 24px 32px 32px;
+.composer {
+  width: min(880px, 100%);
+  margin: 0 auto;
+  padding: 16px 18px 14px;
+  border-radius: 28px;
+  background: #ffffff;
+  border: 1px solid #d9d9de;
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.08);
 }
 
-.input-wrapper {
-  background: white;
-  border: 1px solid #e2e8f0;
-  border-radius: 16px;
-  padding: 8px 12px;
+.composer textarea {
+  width: 100%;
+  min-height: 56px;
+  max-height: 180px;
+  resize: none;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: #111827;
+  font-size: 16px;
+  line-height: 1.7;
+
+  &::placeholder {
+    color: #9ca3af;
+  }
+}
+
+.composer-bottom {
   display: flex;
   align-items: flex-end;
-  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.05);
-  transition: border-color 0.2s;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 8px;
+}
 
-  &:focus-within {
-    border-color: #3b82f6;
-  }
+.composer-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
 
-  textarea {
-    flex: 1;
-    border: none;
-    outline: none;
-    padding: 10px;
-    resize: none;
-    font-size: 14px;
-    max-height: 150px;
-
-    &::placeholder {
-      color: #94a3b8;
-    }
-  }
+.composer-tag {
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: #f7f7f8;
+  border: 1px solid #ececf0;
+  color: #6b7280;
+  font-size: 12px;
 }
 
 .send-btn {
-  background: #3b82f6;
-  color: white;
+  width: 44px;
+  height: 44px;
+  flex: 0 0 auto;
   border: none;
-  width: 36px;
-  height: 36px;
-  border-radius: 10px;
-  display: flex;
+  border-radius: 14px;
+  background: #111827;
+  color: #ffffff;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  margin-bottom: 4px;
-  transition: opacity 0.2s;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+
+  &:hover:not(:disabled) {
+    opacity: 0.94;
+    transform: translateY(-1px);
+  }
 
   &:disabled {
-    background: #e2e8f0;
+    opacity: 0.45;
     cursor: not-allowed;
   }
 
@@ -562,27 +1085,22 @@ onMounted(() => {
   background: #ef4444;
 }
 
-.send-btn.cancel:hover {
-  opacity: 0.92;
+.composer-note {
+  margin: 10px 0 0;
+  text-align: center;
+  color: #9ca3af;
+  font-size: 12px;
 }
 
-.input-tip {
-  font-size: 11px;
-  color: #94a3b8;
-  margin: 8px 0 0 12px;
-}
-
-/* 动画效果 */
 .typing-dots {
   display: flex;
-  gap: 4px;
-  padding: 4px;
+  gap: 6px;
 
   span {
-    width: 6px;
-    height: 6px;
-    background: #cbd5e1;
-    border-radius: 50%;
+    width: 7px;
+    height: 7px;
+    border-radius: 999px;
+    background: rgba(107, 114, 128, 0.7);
     animation: blink 1.4s infinite both;
 
     &:nth-child(2) {
@@ -599,71 +1117,123 @@ onMounted(() => {
   0%,
   80%,
   100% {
-    opacity: 0.2;
+    opacity: 0.24;
+    transform: translateY(0);
   }
 
   40% {
     opacity: 1;
+    transform: translateY(-2px);
+  }
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 5px rgba(34, 197, 94, 0.12);
+  }
+
+  50% {
+    transform: scale(1.08);
+    box-shadow: 0 0 0 9px rgba(34, 197, 94, 0.08);
+  }
+}
+
+@media (max-width: 1180px) {
+  .chatgpt-page {
+    padding: 14px;
+  }
+
+  .chatgpt-shell {
+    height: calc(100vh - 28px);
+    max-height: calc(100vh - 28px);
+  }
+
+  .workspace-sidebar {
+    width: 252px;
   }
 }
 
 @media (max-width: 900px) {
-  .ai-main {
-    width: 96%;
-    height: calc(100vh - 220px);
+  .chatgpt-page {
+    height: 100vh;
+    padding: 0;
   }
 
-  .side-panel {
-    width: 240px;
-    padding: 24px 18px;
-  }
-}
-
-@media (max-width: 768px) {
-  .ai-page {
-    padding: 24px 18px 32px;
+  .chatgpt-shell {
+    height: 100vh;
+    max-height: 100vh;
+    border-radius: 0;
+    border-left: none;
+    border-right: none;
   }
 
-  .ai-header {
+  .workspace-sidebar {
+    display: none;
+  }
+
+  .stage-header {
+    padding: 18px 16px 12px;
     flex-direction: column;
+  }
+
+  .header-status {
+    width: 100%;
     align-items: flex-start;
   }
 
-  .ai-main {
-    width: 100%;
-    height: calc(100vh - 220px);
+  .conversation-body {
+    padding: 22px 16px;
+  }
+
+  .hero-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .suggestion-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .composer-panel {
+    padding: 14px 12px 18px;
+  }
+
+  .composer {
+    padding: 14px 14px 12px;
+    border-radius: 24px;
+  }
+
+  .composer-bottom {
     flex-direction: column;
+    align-items: stretch;
   }
 
-  .side-panel {
+  .send-btn {
     width: 100%;
-    border-right: none;
-    border-bottom: 1px solid rgba(0, 0, 0, 0.05);
-    flex-direction: row;
-    align-items: center;
-    gap: 12px;
+    height: 44px;
+  }
+}
+
+@media (max-width: 640px) {
+  .header-main h1 {
+    font-size: 22px;
   }
 
-  .stat-group {
-    display: flex;
+  .welcome-panel h2 {
+    font-size: 30px;
+  }
+
+  .hero-stats {
+    grid-template-columns: 1fr;
+  }
+
+  .message-row {
     gap: 10px;
-    overflow: auto;
   }
 
-  .stat-card {
-    min-width: 120px;
-    margin-bottom: 0;
-  }
-
-  .refresh-btn {
-    margin-left: auto;
-  }
-
-  .chat-header,
-  .chat-viewport,
-  .input-area {
-    padding-left: 16px;
-    padding-right: 16px;
+  .message-column {
+    max-width: calc(100% - 42px);
   }
 }
 </style>

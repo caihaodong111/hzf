@@ -50,6 +50,7 @@ yarn-error.log*
 pnpm-debug.log*
 dist/
 .cache/
+release/
 
 # Vue
 .DS_Store

@@ -134,6 +134,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import * as echarts from 'echarts'
 import { Refresh, Search } from '@element-plus/icons-vue'
 import { getRealtimeData, getHistoricalData } from '@/api/sensors'
+import { createRealtimeSocket } from '@/utils/realtimeSocket'
 
 const loading = ref(false)
 const sensors = ref([])
@@ -147,6 +148,8 @@ const historyChartRef = ref(null)
 const historySeries = ref([])
 const historyLoading = ref(false)
 let historyChart = null
+let realtimeSocket = null
+let realtimeRefreshTimer = null
 
 // 高德地图实例
 let amapInstance = null
@@ -474,6 +477,16 @@ const loadRealtime = async () => {
   }
 }
 
+const scheduleRealtimeRefresh = () => {
+  if (realtimeRefreshTimer) {
+    clearTimeout(realtimeRefreshTimer)
+  }
+  realtimeRefreshTimer = setTimeout(() => {
+    realtimeRefreshTimer = null
+    loadRealtime()
+  }, 250)
+}
+
 const selectSensor = (sensor) => {
   if (!sensor.station_id) return
   selectedId.value = sensor.station_id
@@ -617,6 +630,14 @@ onMounted(async () => {
   }
 
   loadRealtime()
+
+  realtimeSocket = createRealtimeSocket({
+    onMessage: (message) => {
+      if (!message || message.event !== 'realtime.snapshot.updated') return
+      scheduleRealtimeRefresh()
+    }
+  })
+  realtimeSocket.connect()
 })
 
 watch(displaySensors, (next) => {
@@ -631,6 +652,11 @@ watch(displaySensors, (next) => {
 })
 
 onUnmounted(() => {
+  if (realtimeRefreshTimer) {
+    clearTimeout(realtimeRefreshTimer)
+    realtimeRefreshTimer = null
+  }
+  realtimeSocket?.close()
   // 销毁地图实例
   if (amapInstance) {
     amapInstance.destroy()

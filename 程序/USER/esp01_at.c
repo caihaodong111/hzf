@@ -144,6 +144,14 @@ uint8_t ESP01_ConnectWiFi(void)
     return 1U;
 }
 
+uint8_t ESP01_ReportSensorsUpstream(float ph, float turbidity, float temperature, float tds)
+{
+#if (SENSOR_UPLINK_MODE == SENSOR_UPLINK_MODE_MQTT)
+    DebugUart_SendString("MQTT uplink not enabled, fallback to HTTP\r\n");
+#endif
+    return ESP01_ReportSensorsHttpGet(ph, turbidity, temperature, tds);
+}
+
 uint8_t ESP01_ReportSensorsHttpGet(float ph, float turbidity, float temperature, float tds)
 {
     char cmd[96];

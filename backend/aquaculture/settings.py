@@ -5,6 +5,7 @@ import os
 import json
 from pathlib import Path
 from datetime import timedelta
+from celery.schedules import crontab
 
 # Load environment variables from .env file
 from dotenv import load_dotenv
@@ -37,6 +38,7 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
 
     # Third party apps
+    'channels',
     'rest_framework',
     'corsheaders',
     'django_filters',
@@ -76,6 +78,24 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'aquaculture.wsgi.application'
+ASGI_APPLICATION = 'aquaculture.asgi.application'
+
+CHANNEL_LAYER_BACKEND = os.environ.get('CHANNEL_LAYER_BACKEND', 'memory').strip().lower()
+if CHANNEL_LAYER_BACKEND == 'redis':
+    CHANNEL_LAYERS = {
+        'default': {
+            'BACKEND': 'channels_redis.core.RedisChannelLayer',
+            'CONFIG': {
+                'hosts': [os.environ.get('CHANNEL_REDIS_URL', os.environ.get('REDIS_URL', 'redis://127.0.0.1:6379/1'))],
+            },
+        },
+    }
+else:
+    CHANNEL_LAYERS = {
+        'default': {
+            'BACKEND': 'channels.layers.InMemoryChannelLayer',
+        },
+    }
 
 # Database
 DATABASES = {
@@ -255,3 +275,20 @@ AMAP_GEOCODE_ENABLED = os.environ.get("AMAP_GEOCODE_ENABLED", "true").lower() ==
 # with_city=True 数据量大，默认关闭；如需在按城市抓取时也进行地理编码可开启
 AMAP_GEOCODE_ENABLED_WITH_CITY = os.environ.get("AMAP_GEOCODE_ENABLED_WITH_CITY", "false").lower() == "true"
 AMAP_GEOCODE_MAX_SECTIONS = int(os.environ.get("AMAP_GEOCODE_MAX_SECTIONS", "300"))
+
+# Celery (Redis broker + hourly beat schedule)
+CELERY_BROKER_URL = os.environ.get("CELERY_BROKER_URL", os.environ.get("REDIS_URL", "redis://127.0.0.1:6379/1"))
+CELERY_RESULT_BACKEND = os.environ.get("CELERY_RESULT_BACKEND", CELERY_BROKER_URL)
+CELERY_ACCEPT_CONTENT = ["json"]
+CELERY_TASK_SERIALIZER = "json"
+CELERY_RESULT_SERIALIZER = "json"
+CELERY_TIMEZONE = TIME_ZONE
+CELERY_ENABLE_UTC = False
+CELERY_TASK_IGNORE_RESULT = True
+CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
+CELERY_BEAT_SCHEDULE = {
+    "sync-national-water-data-hourly": {
+        "task": "apps.sensors.tasks.sync_national_realtime_data",
+        "schedule": crontab(minute=0),
+    },
+}

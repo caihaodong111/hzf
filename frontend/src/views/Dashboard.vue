@@ -173,6 +173,7 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { getRealtimeData as apiGetRealtimeData, syncRealtimeData, getAreaOptions } from '@/api/sensors'
 import { getDataSourceSettings } from '@/api/settings'
 import sensorStore from '@/stores/sensorStore'
+import { createRealtimeSocket } from '@/utils/realtimeSocket'
 import { DataLine, Warning, Refresh, CircleCheck, ArrowDown, Search } from '@element-plus/icons-vue'
 
 const loading = computed(() => sensorStore.tasks.realtime.loading.value)
@@ -186,6 +187,8 @@ const isRefreshing = computed(() => (
 const updateLog = ref([])
 const disposed = ref(false)
 const realtimeLoadSeq = ref(0)
+let realtimeSocket = null
+let realtimeRefreshTimer = null
 
 const filters = ref({
   province: '',
@@ -500,6 +503,17 @@ const loadRealtimeData = async (forceRefresh = false) => {
   }
 }
 
+const scheduleRealtimeRefresh = () => {
+  if (disposed.value) return
+  if (realtimeRefreshTimer) {
+    clearTimeout(realtimeRefreshTimer)
+  }
+  realtimeRefreshTimer = setTimeout(() => {
+    realtimeRefreshTimer = null
+    loadRealtimeData(true)
+  }, 250)
+}
+
 const loadDataSourceMode = async () => {
   try {
     const res = await getDataSourceSettings()
@@ -609,12 +623,25 @@ onMounted(async () => {
   }
   loadRealtimeData()
 
+  realtimeSocket = createRealtimeSocket({
+    onMessage: (message) => {
+      if (!message || message.event !== 'realtime.snapshot.updated') return
+      scheduleRealtimeRefresh()
+    }
+  })
+  realtimeSocket.connect()
+
   // 添加点击外部关闭下拉的事件监听
   document.addEventListener('click', handleClickOutside)
 })
 
 onUnmounted(() => {
   disposed.value = true
+  if (realtimeRefreshTimer) {
+    clearTimeout(realtimeRefreshTimer)
+    realtimeRefreshTimer = null
+  }
+  realtimeSocket?.close()
   document.removeEventListener('click', handleClickOutside)
 })
 </script>

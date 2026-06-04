@@ -13,8 +13,13 @@
 #define ESP01_HTTP_PORT      8080U
 #define ESP01_HTTP_PATH      "/sensor"
 
+#define SENSOR_UPLINK_MODE_HTTP  0U
+#define SENSOR_UPLINK_MODE_MQTT  1U
+#define SENSOR_UPLINK_MODE       SENSOR_UPLINK_MODE_HTTP
+
 uint8_t ESP01_BasicSetup(void);
 uint8_t ESP01_ConnectWiFi(void);
+uint8_t ESP01_ReportSensorsUpstream(float ph, float turbidity, float temperature, float tds);
 uint8_t ESP01_ReportSensorsHttpGet(float ph, float turbidity, float temperature, float tds);
 
 #endif

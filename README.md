@@ -79,6 +79,26 @@ python manage.py runserver
 
 后端将运行在 http://localhost:8000
 
+### 2.1 Celery 定时同步（每小时一次）
+
+项目内已接入 `Celery Beat`，默认在 `Asia/Shanghai` 时区每小时整点执行一次国家水质同步任务：
+
+- 任务名：`apps.sensors.tasks.sync_national_realtime_data`
+- 同步参数：`source=national`、`count=0`、`manual=False`、`with_city=True`、`force_refresh=True`
+- Broker / Backend：默认复用 `REDIS_URL`，也可单独配置 `CELERY_BROKER_URL`、`CELERY_RESULT_BACKEND`
+
+启动方式：
+
+```bash
+# 终端1：Celery Worker
+celery -A aquaculture worker -l info
+
+# 终端2：Celery Beat
+celery -A aquaculture beat -l info
+```
+
+说明：Django 服务、`worker`、`beat` 需要同时运行，周期任务才会按小时自动入库。
+
 ### 3. 前端启动
 
 ```bash
