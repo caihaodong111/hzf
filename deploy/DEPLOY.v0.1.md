@@ -30,11 +30,11 @@ bash scripts/build_release_tars.sh
 
 ## 2. 传到服务器
 
-把 `release/v0.1/` 目录下的文件传到 `47.93.141.103`，例如：
+把 `release/v0.1/` 目录下的文件传到 `137.116.136.208`，例如：
 
 ```bash
-ssh root@47.93.141.103 "mkdir -p /opt/zjjz-v0.1"
-scp release/v0.1/* root@47.93.141.103:/opt/zjjz-v0.1/
+ssh root@137.116.136.208 "mkdir -p /opt/zjjz-v0.1"
+scp release/v0.1/* root@137.116.136.208:/opt/zjjz-v0.1/
 ```
 
 ## 3. 服务器加载镜像

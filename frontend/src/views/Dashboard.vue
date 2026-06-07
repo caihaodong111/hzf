@@ -10,6 +10,14 @@
         </div>
         <div class="top-actions">
           <button
+            class="action-btn serial-btn"
+            type="button"
+            :disabled="serialBusy || !isSerialSupported"
+            @click="handleSerialToggle"
+          >
+            {{ serialButtonText }}
+          </button>
+          <button
             v-if="isManualMode"
             class="action-btn manual-btn"
             type="button"
@@ -122,6 +130,31 @@
               <span>藻密度(cells/L)</span>
               <span>状态</span>
             </div>
+            <div v-if="fixedSerialSensor" class="list-fixed">
+              <div class="list-item pinned-item">
+                <span class="cell">{{ fixedSerialSensor.province || '-' }}</span>
+                <span class="cell">{{ fixedSerialSensor.river_basin || '-' }}</span>
+                <span class="name" :class="{ 'data-updated': fixedSerialSensor.justUpdated }">{{ fixedSerialSensor.station_name }}</span>
+                <span>
+                  <b class="quality-text" :class="getQualityClass(fixedSerialSensor.water_quality)">{{ fixedSerialSensor.water_quality || '-' }}</b>
+                </span>
+                <span class="time" :class="{ 'data-updated': fixedSerialSensor.justUpdated }">{{ formatTime(fixedSerialSensor.timestamp) }}</span>
+                <span class="cell">{{ formatValue(getMetricValue(fixedSerialSensor, 'temperature')) }}</span>
+                <span class="cell">{{ formatValue(getMetricValue(fixedSerialSensor, 'ph')) }}</span>
+                <span class="cell">{{ formatValue(getMetricValue(fixedSerialSensor, 'dissolved_oxygen')) }}</span>
+                <span class="cell">{{ formatValue(getMetricValue(fixedSerialSensor, 'conductivity')) }}</span>
+                <span class="cell">{{ formatValue(getMetricValue(fixedSerialSensor, 'turbidity')) }}</span>
+                <span class="cell">{{ formatValue(getMetricValue(fixedSerialSensor, 'permanganate_index')) }}</span>
+                <span class="cell">{{ formatValue(getMetricValue(fixedSerialSensor, 'ammonia_nitrogen')) }}</span>
+                <span class="cell">{{ formatValue(getMetricValue(fixedSerialSensor, 'total_phosphorus')) }}</span>
+                <span class="cell">{{ formatValue(getMetricValue(fixedSerialSensor, 'total_nitrogen')) }}</span>
+                <span class="cell">{{ formatValue(getMetricValue(fixedSerialSensor, 'chlorophyll_a')) }}</span>
+                <span class="cell">{{ formatValue(getMetricValue(fixedSerialSensor, 'algae_density')) }}</span>
+                <span class="status">
+                  <div class="indicator" :class="isOnline(fixedSerialSensor.timestamp) ? 'online' : 'offline'"></div>
+                </span>
+              </div>
+            </div>
             <div class="list-body" :class="{ scrolling: shouldScroll }">
               <div class="list-track" :style="{ '--scroll-duration': scrollDuration }">
                 <div
@@ -181,14 +214,41 @@ const sensors = ref([])
 const total = ref(0)
 const dataSourceMode = ref('auto')
 const isManualFetching = ref(false)
+const isSerialSupported = typeof navigator !== 'undefined' && 'serial' in navigator
+const serialStatus = ref(isSerialSupported ? 'disconnected' : 'unsupported')
+const serialSensor = ref(null)
 const isRefreshing = computed(() => (
   sensorStore.tasks.realtime.loading.value || sensorStore.tasks.sync.loading.value
 ))
 const updateLog = ref([])
 const disposed = ref(false)
 const realtimeLoadSeq = ref(0)
+const fixedSerialSensor = computed(() => serialSensor.value)
+const serialBusy = computed(() => (
+  serialStatus.value === 'connecting' || serialStatus.value === 'disconnecting'
+))
+const serialButtonText = computed(() => {
+  if (!isSerialSupported) return '串口不可用'
+  if (serialStatus.value === 'connecting') return '连接中...'
+  if (serialStatus.value === 'disconnecting') return '断开中...'
+  if (serialStatus.value === 'connected') return '断开串口'
+  return '连接串口'
+})
 let realtimeSocket = null
 let realtimeRefreshTimer = null
+let serialPort = null
+let serialReader = null
+let serialReadLoopPromise = null
+let serialReadHighlightTimer = null
+let serialTextBuffer = ''
+
+const SERIAL_BAUD_RATE = 115200
+const SERIAL_STATION_ID = 'serial-demo-tust'
+const SERIAL_STATION_NAME = '太原科技大学'
+const SERIAL_LOCATION = '太原科技大学'
+const SERIAL_CITY = '太原市'
+const SERIAL_PROVINCE = '山西省'
+const SERIAL_RIVER_BASIN = 'demo'
 
 const filters = ref({
   province: '',
@@ -231,6 +291,238 @@ const selectedProvinceLabel = computed(() => {
   }
   return selectedProvince.value.name
 })
+
+const clearSerialSensor = () => {
+  if (serialReadHighlightTimer) {
+    clearTimeout(serialReadHighlightTimer)
+    serialReadHighlightTimer = null
+  }
+  serialSensor.value = null
+}
+
+const applySerialSensor = (nextSensor) => {
+  serialSensor.value = {
+    ...nextSensor,
+    justUpdated: true
+  }
+  if (serialReadHighlightTimer) {
+    clearTimeout(serialReadHighlightTimer)
+  }
+  serialReadHighlightTimer = setTimeout(() => {
+    if (!serialSensor.value) return
+    serialSensor.value = {
+      ...serialSensor.value,
+      justUpdated: false
+    }
+  }, 2000)
+}
+
+const buildSerialSensor = (metrics) => ({
+  station_id: SERIAL_STATION_ID,
+  station_name: SERIAL_STATION_NAME,
+  location: SERIAL_LOCATION,
+  province: SERIAL_PROVINCE,
+  city: SERIAL_CITY,
+  river_basin: SERIAL_RIVER_BASIN,
+  water_quality: null,
+  temperature: metrics.temperature ?? null,
+  ph: metrics.ph ?? null,
+  dissolved_oxygen: metrics.dissolved_oxygen ?? null,
+  conductivity: metrics.conductivity ?? null,
+  turbidity: metrics.turbidity ?? null,
+  salinity: metrics.salinity ?? null,
+  timestamp: new Date().toISOString(),
+  data_source: 'serial'
+})
+
+const parseSerialSensorLine = (line) => {
+  const trimmed = String(line || '').trim()
+  if (!trimmed) return null
+
+  const matches = [...trimmed.matchAll(/([A-Za-z_][A-Za-z0-9_]*)=([-+]?\d+(?:\.\d+)?)/g)]
+  if (!matches.length) return null
+
+  const metrics = {}
+  matches.forEach((match) => {
+    const key = match[1].toUpperCase()
+    const value = Number(match[2])
+    if (Number.isNaN(value)) return
+
+    if (key === 'TEMP' || key === 'TEMPERATURE') {
+      metrics.temperature = value
+      return
+    }
+    if (key === 'PH') {
+      metrics.ph = value
+      return
+    }
+    if (key === 'DO' || key === 'OXYGEN' || key === 'DISSOLVED_OXYGEN') {
+      metrics.dissolved_oxygen = value
+      return
+    }
+    if (key === 'TDS' || key === 'EC' || key === 'COND' || key === 'CONDUCTIVITY') {
+      metrics.conductivity = value
+      return
+    }
+    if (key === 'TURB' || key === 'TURBIDITY' || key === 'NTU') {
+      metrics.turbidity = value
+      return
+    }
+    if (key === 'SALINITY') {
+      metrics.salinity = value
+    }
+  })
+
+  if (!Object.keys(metrics).length) return null
+  return buildSerialSensor(metrics)
+}
+
+const handleSerialChunk = (chunk) => {
+  serialTextBuffer += chunk
+  const lines = serialTextBuffer.split(/\r?\n/)
+  serialTextBuffer = lines.pop() || ''
+  lines.forEach((line) => {
+    const parsed = parseSerialSensorLine(line)
+    if (parsed) {
+      applySerialSensor(parsed)
+    }
+  })
+}
+
+const startSerialReadLoop = (port) => {
+  const decoder = new TextDecoder()
+  serialTextBuffer = ''
+  serialReadLoopPromise = (async () => {
+    while (port?.readable && serialStatus.value === 'connected') {
+      serialReader = port.readable.getReader()
+      try {
+        while (serialStatus.value === 'connected') {
+          const { value, done } = await serialReader.read()
+          if (done) break
+          if (!value) continue
+          handleSerialChunk(decoder.decode(value, { stream: true }))
+        }
+      } catch (error) {
+        if (serialStatus.value === 'connected') {
+          console.error('串口读取失败:', error)
+        }
+      } finally {
+        try {
+          serialReader?.releaseLock()
+        } catch (error) {
+          console.error('释放串口读取锁失败:', error)
+        }
+        serialReader = null
+      }
+
+      if (!port.readable) break
+    }
+
+    if (serialStatus.value === 'connected' && serialPort === port) {
+      serialPort = null
+      serialStatus.value = 'disconnected'
+      clearSerialSensor()
+      serialTextBuffer = ''
+    }
+  })()
+}
+
+const openSerialPort = async (port) => {
+  if (!port) return
+  if (!port.readable) {
+    await port.open({ baudRate: SERIAL_BAUD_RATE })
+  }
+  serialPort = port
+  serialStatus.value = 'connected'
+  clearSerialSensor()
+  startSerialReadLoop(port)
+}
+
+const closeSerialPort = async () => {
+  const currentPort = serialPort
+  if (!currentPort) {
+    serialStatus.value = isSerialSupported ? 'disconnected' : 'unsupported'
+    clearSerialSensor()
+    serialTextBuffer = ''
+    return
+  }
+
+  serialStatus.value = 'disconnecting'
+  try {
+    if (serialReader) {
+      await serialReader.cancel()
+    }
+  } catch (error) {
+    console.error('取消串口读取失败:', error)
+  }
+
+  try {
+    await serialReadLoopPromise
+  } catch (error) {
+    console.error('等待串口读取结束失败:', error)
+  } finally {
+    serialReadLoopPromise = null
+  }
+
+  try {
+    await currentPort.close()
+  } catch (error) {
+    console.error('关闭串口失败:', error)
+  }
+
+  serialPort = null
+  serialStatus.value = 'disconnected'
+  clearSerialSensor()
+  serialTextBuffer = ''
+}
+
+const connectSerialPort = async (port = null) => {
+  if (!isSerialSupported || serialBusy.value) return
+
+  serialStatus.value = 'connecting'
+  try {
+    const nextPort = port || await navigator.serial.requestPort()
+    await openSerialPort(nextPort)
+  } catch (error) {
+    serialStatus.value = 'disconnected'
+    if (error?.name !== 'NotFoundError') {
+      console.error('连接串口失败:', error)
+    }
+  }
+}
+
+const restoreSerialPort = async () => {
+  if (!isSerialSupported || serialPort || serialBusy.value) return
+  try {
+    const ports = await navigator.serial.getPorts()
+    if (!ports.length) return
+    await connectSerialPort(ports[0])
+  } catch (error) {
+    console.error('恢复串口授权失败:', error)
+  }
+}
+
+const handleSerialToggle = async () => {
+  if (!isSerialSupported || serialBusy.value) return
+  if (serialStatus.value === 'connected') {
+    await closeSerialPort()
+    return
+  }
+  await connectSerialPort()
+}
+
+const handleSerialConnected = async () => {
+  if (!isSerialSupported || serialPort || serialStatus.value === 'connecting') return
+  await restoreSerialPort()
+}
+
+const handleSerialDisconnected = async (event) => {
+  const disconnectedPort = event?.port || event?.target || null
+  if (serialPort && disconnectedPort && disconnectedPort !== serialPort) {
+    return
+  }
+  await closeSerialPort()
+}
 
 // 切换省份下拉
 const toggleProvinceDropdown = () => {
@@ -633,6 +925,11 @@ onMounted(async () => {
 
   // 添加点击外部关闭下拉的事件监听
   document.addEventListener('click', handleClickOutside)
+  if (isSerialSupported) {
+    navigator.serial.addEventListener('connect', handleSerialConnected)
+    navigator.serial.addEventListener('disconnect', handleSerialDisconnected)
+    await restoreSerialPort()
+  }
 })
 
 onUnmounted(() => {
@@ -643,6 +940,15 @@ onUnmounted(() => {
   }
   realtimeSocket?.close()
   document.removeEventListener('click', handleClickOutside)
+  if (isSerialSupported) {
+    navigator.serial.removeEventListener('connect', handleSerialConnected)
+    navigator.serial.removeEventListener('disconnect', handleSerialDisconnected)
+    closeSerialPort().catch(() => {})
+  }
+  if (serialReadHighlightTimer) {
+    clearTimeout(serialReadHighlightTimer)
+    serialReadHighlightTimer = null
+  }
 })
 </script>
 
@@ -716,6 +1022,12 @@ $text-sub: #64748b;
       font-size: 12px;
       font-weight: 600;
       letter-spacing: 0.4px;
+    }
+
+    .serial-btn {
+      min-width: 92px;
+      font-size: 12px;
+      font-weight: 600;
     }
 
     .action-btn:disabled {
@@ -1133,6 +1445,13 @@ $text-sub: #64748b;
     }
   }
 
+  .list-fixed {
+    min-width: 1600px;
+    width: max-content;
+    border-bottom: 1px solid rgba(14, 165, 233, 0.14);
+    background: linear-gradient(90deg, rgba(14, 165, 233, 0.12), rgba(59, 130, 246, 0.04));
+  }
+
   .list-body:hover .list-track {
     animation-play-state: paused;
   }
@@ -1174,6 +1493,16 @@ $text-sub: #64748b;
     &:hover {
       background: rgba(255, 255, 255, 0.3);
       transform: scale(1.005);
+    }
+
+    &.pinned-item {
+      background: rgba(255, 255, 255, 0.52);
+      box-shadow: inset 0 0 0 1px rgba(14, 165, 233, 0.16);
+
+      &:hover {
+        background: rgba(255, 255, 255, 0.62);
+        transform: none;
+      }
     }
 
     .name {
